@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Usage HUD</title>
+    <script type="module" src="./hud.ts"></script>
+  </head>
+  <body>
+    <section id="hud" class="hud" data-tauri-drag-region>
+      <div class="hud-header" data-tauri-drag-region>
+        <div data-tauri-drag-region>
+          <strong data-tauri-drag-region>Agent Usage</strong>
+          <span id="updated" data-tauri-drag-region>--</span>
+        </div>
+        <div class="hud-actions">
+          <button id="opacity-down" class="hud-button no-drag" title="Decrease opacity" aria-label="Decrease opacity">
+            ◐
+          </button>
+          <input
+            id="opacity"
+            class="opacity-slider no-drag"
+            type="range"
+            min="30"
+            max="100"
+            value="82"
+            title="Opacity"
+            aria-label="Opacity"
+          />
+          <button id="open-dashboard" class="hud-button no-drag" title="Open dashboard" aria-label="Open dashboard">
+            □
+          </button>
+          <button id="minimize" class="hud-button no-drag" title="Minimize HUD to taskbar" aria-label="Minimize HUD to taskbar">
+            −
+          </button>
+        </div>
+      </div>
+      <div id="rows" class="rows" data-tauri-drag-region></div>
+    </section>
+  </body>
+</html>

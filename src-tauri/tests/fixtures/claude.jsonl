@@ -1,0 +1,2 @@
+{"timestamp":"2026-06-04T00:00:00Z","message":{"usage":{"input_tokens":1000,"output_tokens":250}}}
+{"timestamp":"2026-06-04T00:30:00Z","usage":{"input_tokens":200,"output_tokens":50}}
