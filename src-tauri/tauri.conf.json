@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "agent-usage",
+  "version": "0.1.0",
+  "identifier": "dev.ryu.agent-usage",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420/src/dashboard/index.html",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Agent Usage",
+        "url": "/src/dashboard/index.html",
+        "width": 1080,
+        "height": 760,
+        "minWidth": 860,
+        "minHeight": 620,
+        "visible": true,
+        "decorations": true,
+        "transparent": false
+      },
+      {
+        "label": "hud",
+        "title": "Agent Usage HUD",
+        "url": "/src/hud/index.html",
+        "width": 360,
+        "height": 330,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": false,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "DeveloperTool",
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
+  }
+}

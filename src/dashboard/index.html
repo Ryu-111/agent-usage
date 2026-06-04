@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Usage</title>
+    <script type="module" src="./dashboard.ts"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Agent Usage</p>
+          <h1>Rate limit dashboard</h1>
+        </div>
+        <button id="refresh" class="icon-button" title="Refresh usage" aria-label="Refresh usage">
+          <span aria-hidden="true">↻</span>
+        </button>
+      </header>
+      <section id="rings" class="ring-grid" aria-label="Usage rings"></section>
+      <section class="panels">
+        <div>
+          <h2>Burn rate</h2>
+          <div id="burn-rates" class="metric-list"></div>
+        </div>
+        <div>
+          <h2>7 day history</h2>
+          <div class="bars" aria-hidden="true">
+            <span style="--h: 42%"></span>
+            <span style="--h: 55%"></span>
+            <span style="--h: 31%"></span>
+            <span style="--h: 66%"></span>
+            <span style="--h: 48%"></span>
+            <span style="--h: 72%"></span>
+            <span style="--h: 58%"></span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
