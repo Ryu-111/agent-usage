@@ -1,14 +1,21 @@
+use std::path::PathBuf;
+
 use chrono::{DateTime, Duration, Utc};
 use reqwest::StatusCode;
 use serde::Deserialize;
 
-use crate::core::model::{Agent, SnapshotSource, TokenEvent, UsageSnapshot, UsageWindow};
+use crate::core::model::{
+    merge_with_local, rate_limit_snapshots, Agent, SnapshotSource, TokenEvent, UsageSnapshot,
+    UsageWindow,
+};
+use crate::providers::claude_hook::{cache_file_path, read_hook_cache, HOOK_CACHE_MAX_AGE_MINUTES};
 use crate::providers::creds::read_claude_credentials;
 use crate::providers::jsonl::read_token_events;
 
 #[derive(Debug, Clone)]
 pub struct ClaudeProvider {
     projects_pattern: Option<String>,
+    hook_cache_path: Option<PathBuf>,
     client: reqwest::Client,
 }
 
@@ -18,6 +25,7 @@ impl Default for ClaudeProvider {
             dirs::home_dir().map(|home| format!("{}/.claude/projects/**/*.jsonl", home.display()));
         Self {
             projects_pattern,
+            hook_cache_path: cache_file_path(),
             client: reqwest::Client::new(),
         }
     }
@@ -27,14 +35,32 @@ impl ClaudeProvider {
     pub fn with_projects_pattern(pattern: String) -> Self {
         Self {
             projects_pattern: Some(pattern),
+            hook_cache_path: None,
             client: reqwest::Client::new(),
         }
     }
 
+    pub fn with_hook_cache_path(mut self, path: PathBuf) -> Self {
+        self.hook_cache_path = Some(path);
+        self
+    }
+
     pub async fn snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {
         let local = self.local_snapshot()?;
+
+        if let Some(path) = &self.hook_cache_path {
+            if let Ok(Some(reading)) =
+                read_hook_cache(path, Duration::minutes(HOOK_CACHE_MAX_AGE_MINUTES))
+            {
+                return Ok(merge_with_local(
+                    rate_limit_snapshots(Agent::ClaudeCode, &reading),
+                    local,
+                ));
+            }
+        }
+
         match self.official_snapshot().await {
-            Ok(Some(official)) => Ok(merge_official_with_local(official, local)),
+            Ok(Some(official)) => Ok(merge_with_local(official, local)),
             _ => Ok(local),
         }
     }
@@ -87,6 +113,7 @@ struct ClaudeUsageResponse {
 
 impl ClaudeUsageResponse {
     fn into_snapshots(self) -> Vec<UsageSnapshot> {
+        let now = Utc::now();
         vec![
             UsageSnapshot {
                 agent: Agent::ClaudeCode,
@@ -97,6 +124,7 @@ impl ClaudeUsageResponse {
                 reset_at: self.five_hour_reset,
                 limit_reached_at: None,
                 source: SnapshotSource::Official,
+                observed_at: Some(now),
             },
             UsageSnapshot {
                 agent: Agent::ClaudeCode,
@@ -107,6 +135,7 @@ impl ClaudeUsageResponse {
                 reset_at: self.weekly_reset,
                 limit_reached_at: None,
                 source: SnapshotSource::Official,
+                observed_at: Some(now),
             },
         ]
     }
@@ -158,26 +187,8 @@ fn local_window(
         } else {
             SnapshotSource::Unavailable
         },
+        observed_at: Some(now),
     }
-}
-
-fn merge_official_with_local(
-    official: Vec<UsageSnapshot>,
-    local: Vec<UsageSnapshot>,
-) -> Vec<UsageSnapshot> {
-    official
-        .into_iter()
-        .map(|mut official_window| {
-            if let Some(local_window) = local
-                .iter()
-                .find(|candidate| candidate.window == official_window.window)
-            {
-                official_window.used_tokens = local_window.used_tokens;
-                official_window.burn_rate_tokens_per_min = local_window.burn_rate_tokens_per_min;
-            }
-            official_window
-        })
-        .collect()
 }
 
 #[cfg(test)]

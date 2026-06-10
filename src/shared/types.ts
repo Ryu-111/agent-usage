@@ -1,6 +1,12 @@
 export type Agent = "claudeCode" | "codex";
 export type UsageWindow = "fiveHour" | "weekly";
-export type SnapshotSource = "official" | "localEstimate" | "unavailable";
+export type SnapshotSource =
+  | "official"
+  | "officialCli"
+  | "sessionLog"
+  | "hookCache"
+  | "localEstimate"
+  | "unavailable";
 
 export interface UsageSnapshot {
   agent: Agent;
@@ -11,6 +17,7 @@ export interface UsageSnapshot {
   resetAt: string | null;
   limitReachedAt: string | null;
   source: SnapshotSource;
+  observedAt: string | null;
 }
 
 export interface AgentUsage {
@@ -31,4 +38,13 @@ export const agentLabel: Record<Agent, string> = {
 export const windowLabel: Record<UsageWindow, string> = {
   fiveHour: "5h",
   weekly: "Week"
+};
+
+export const sourceLabel: Record<SnapshotSource, string> = {
+  official: "API",
+  officialCli: "CLI",
+  sessionLog: "session",
+  hookCache: "hook",
+  localEstimate: "est.",
+  unavailable: "—"
 };

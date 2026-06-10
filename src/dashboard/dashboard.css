@@ -156,3 +156,28 @@ h1 {
     grid-template-columns: 1fr;
   }
 }
+
+.hook-setup:empty {
+  display: none;
+}
+
+.hook-button {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.hook-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.hook-note {
+  font-size: 13px;
+  opacity: 0.75;
+  margin: 0;
+}

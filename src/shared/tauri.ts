@@ -38,7 +38,8 @@ export function demoSnapshot(): AppSnapshot {
             burnRateTokensPerMin: 280,
             resetAt: new Date(Date.now() + 92 * 60_000).toISOString(),
             limitReachedAt: null,
-            source: "localEstimate"
+            source: "localEstimate",
+            observedAt: new Date().toISOString()
           },
           {
             agent: "claudeCode",
@@ -48,7 +49,8 @@ export function demoSnapshot(): AppSnapshot {
             burnRateTokensPerMin: 61,
             resetAt: new Date(Date.now() + 2.1 * 86_400_000).toISOString(),
             limitReachedAt: null,
-            source: "official"
+            source: "official",
+            observedAt: new Date().toISOString()
           }
         ]
       },
@@ -63,7 +65,8 @@ export function demoSnapshot(): AppSnapshot {
             burnRateTokensPerMin: 386,
             resetAt: new Date(Date.now() + 174 * 60_000).toISOString(),
             limitReachedAt: null,
-            source: "localEstimate"
+            source: "localEstimate",
+            observedAt: new Date().toISOString()
           },
           {
             agent: "codex",
@@ -73,7 +76,8 @@ export function demoSnapshot(): AppSnapshot {
             burnRateTokensPerMin: 38,
             resetAt: new Date(Date.now() + 4.7 * 86_400_000).toISOString(),
             limitReachedAt: null,
-            source: "localEstimate"
+            source: "localEstimate",
+            observedAt: new Date().toISOString()
           }
         ]
       }

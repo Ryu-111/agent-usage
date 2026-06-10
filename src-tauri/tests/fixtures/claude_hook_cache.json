@@ -1,0 +1,1 @@
+{"written_at":4070908800,"hook_payload":{"session_id":"xyz","hook_event_name":"Stop","rate_limits":{"five_hour":{"used_percentage":42.3,"resets_at":4070912400},"seven_day":{"used_percentage":85.7,"resets_at":4071517200}}}}

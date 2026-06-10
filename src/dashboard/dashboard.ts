@@ -1,11 +1,18 @@
 import "../shared/base.css";
 import "./dashboard.css";
-import { agentLabel, windowLabel, type AppSnapshot, type UsageSnapshot } from "../shared/types";
+import {
+  agentLabel,
+  sourceLabel,
+  windowLabel,
+  type AppSnapshot,
+  type UsageSnapshot
+} from "../shared/types";
 import { demoSnapshot, invokeCommand, listenSnapshot } from "../shared/tauri";
 
 const rings = document.querySelector<HTMLDivElement>("#rings");
 const burnRates = document.querySelector<HTMLDivElement>("#burn-rates");
 const refresh = document.querySelector<HTMLButtonElement>("#refresh");
+const hookSetup = document.querySelector<HTMLDivElement>("#hook-setup");
 
 function percent(snapshot: UsageSnapshot): number {
   if (typeof snapshot.utilizationPct === "number") {
@@ -23,6 +30,23 @@ function formatTokens(value: number | null): string {
     return "No data";
   }
   return new Intl.NumberFormat(undefined, { notation: "compact" }).format(value);
+}
+
+function formatAge(observedAt: string | null): string {
+  if (!observedAt) {
+    return "";
+  }
+  const minutes = Math.round((Date.now() - new Date(observedAt).getTime()) / 60_000);
+  if (minutes <= 2) {
+    return "";
+  }
+  if (minutes >= 1440) {
+    return ` · ${Math.round(minutes / 1440)}d old`;
+  }
+  if (minutes >= 60) {
+    return ` · ${Math.round(minutes / 60)}h old`;
+  }
+  return ` · ${minutes}m old`;
 }
 
 function formatReset(value: string | null): string {
@@ -56,7 +80,7 @@ function render(snapshot: AppSnapshot): void {
         </div>
         <div>
           <h2>${agentLabel[usage.agent]}</h2>
-          <p>${windowLabel[usage.window]} · ${usage.source}</p>
+          <p>${windowLabel[usage.window]} · ${sourceLabel[usage.source]}${formatAge(usage.observedAt)}</p>
           <strong>${formatTokens(usage.usedTokens)}</strong>
           <small>${formatReset(usage.resetAt)}</small>
         </div>
@@ -87,6 +111,38 @@ async function load(): Promise<void> {
   }
 }
 
+async function setupHookRow(): Promise<void> {
+  if (!hookSetup) {
+    return;
+  }
+  try {
+    const installed = await invokeCommand<boolean>("claude_hook_status");
+    if (installed) {
+      hookSetup.replaceChildren();
+      return;
+    }
+  } catch {
+    return;
+  }
+  const button = document.createElement("button");
+  button.className = "hook-button";
+  button.textContent = "Enable Claude Code hook (faster, no API calls)";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await invokeCommand<string>("install_claude_hook_cmd");
+      const note = document.createElement("p");
+      note.className = "hook-note";
+      note.textContent = "Hook installed — usage updates after your next Claude Code turn.";
+      hookSetup.replaceChildren(note);
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = `Hook install failed: ${String(error)}`;
+    }
+  });
+  hookSetup.replaceChildren(button);
+}
+
 refresh?.addEventListener("click", async () => {
   try {
     render(await invokeCommand<AppSnapshot>("refresh_usage"));
@@ -97,3 +153,4 @@ refresh?.addEventListener("click", async () => {
 
 void listenSnapshot(render).catch(() => undefined);
 void load();
+void setupHookRow();

@@ -45,6 +45,32 @@ async fn refresh_usage<R: Runtime>(
 }
 
 #[tauri::command]
+async fn install_claude_hook_cmd() -> Result<String, String> {
+    let settings_path = providers::claude_hook::default_claude_settings_path()
+        .ok_or_else(|| "home directory not found".to_string())?;
+    let script_path = providers::claude_hook::hook_script_path()
+        .ok_or_else(|| "data directory not found".to_string())?;
+    let cache_dir = script_path
+        .parent()
+        .ok_or_else(|| "data directory not found".to_string())?
+        .to_path_buf();
+    let status =
+        providers::claude_hook::install_claude_hook(&settings_path, &script_path, &cache_dir)
+            .map_err(|err| err.to_string())?;
+    Ok(match status {
+        providers::claude_hook::HookInstallStatus::Installed => "installed".into(),
+        providers::claude_hook::HookInstallStatus::AlreadyInstalled => "alreadyInstalled".into(),
+    })
+}
+
+#[tauri::command]
+async fn claude_hook_status() -> Result<bool, String> {
+    let settings_path = providers::claude_hook::default_claude_settings_path()
+        .ok_or_else(|| "home directory not found".to_string())?;
+    providers::claude_hook::is_claude_hook_installed(&settings_path).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 async fn show_dashboard<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         window.show().map_err(|err| err.to_string())?;
@@ -59,7 +85,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_usage_snapshot,
             refresh_usage,
-            show_dashboard
+            show_dashboard,
+            install_claude_hook_cmd,
+            claude_hook_status
         ])
         .setup(|app| {
             let state = app.state::<AppState>().inner().clone();
@@ -75,8 +103,13 @@ pub fn run() {
 
 async fn bootstrap_scheduler<R: Runtime>(app: AppHandle<R>, state: AppState) -> anyhow::Result<()> {
     let store = HistoryStore::open_default().context("open usage history store")?;
+    let interval_secs = std::env::var("AGENT_USAGE_INTERVAL_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .unwrap_or(120);
     let scheduler = Scheduler::new(SchedulerConfig {
-        interval: Duration::from_secs(300),
+        interval: Duration::from_secs(interval_secs),
     });
 
     scheduler
