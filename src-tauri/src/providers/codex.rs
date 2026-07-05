@@ -1,11 +1,17 @@
 use std::path::PathBuf;
+use std::sync::OnceLock;
+
+use chrono::{Duration, Utc};
+use tokio::sync::Mutex;
 
 use crate::core::model::{Agent, UsageSnapshot};
 use crate::providers::claude::local_windows;
 use crate::providers::codex_cli::AppServerClient;
 use crate::providers::codex_session::read_latest_rate_limits;
-use crate::providers::jsonl::read_token_events;
+use crate::providers::jsonl::read_recent_token_events;
 use crate::providers::rate_limits::merge_rate_limits_with_local;
+
+static APP_SERVER_STATE: OnceLock<Mutex<AppServerState>> = OnceLock::new();
 
 pub struct CodexProvider {
     sessions_pattern: Option<String>,
@@ -53,9 +59,20 @@ impl CodexProvider {
         let local = self.local_snapshot()?;
 
         if let Some(app_server) = &self.app_server {
-            if let Ok(reading) = app_server.fetch_rate_limits().await {
-                let rate_limits = reading.into_snapshots(Agent::Codex);
-                return Ok(merge_rate_limits_with_local(rate_limits, local));
+            let state_lock = APP_SERVER_STATE.get_or_init(|| Mutex::new(AppServerState::default()));
+            let should_try = {
+                let state = state_lock.lock().await;
+                state.should_try()
+            };
+            if should_try {
+                match app_server.fetch_rate_limits().await {
+                    Ok(reading) => {
+                        state_lock.lock().await.register_success();
+                        let rate_limits = reading.into_snapshots(Agent::Codex);
+                        return Ok(merge_rate_limits_with_local(rate_limits, local));
+                    }
+                    Err(_) => state_lock.lock().await.register_failure(),
+                }
             }
         }
 
@@ -71,10 +88,37 @@ impl CodexProvider {
 
     fn local_snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {
         let events = match &self.sessions_pattern {
-            Some(pattern) => read_token_events(pattern)?,
+            Some(pattern) => read_recent_token_events(pattern, Duration::days(8))?,
             None => Vec::new(),
         };
         Ok(local_windows(Agent::Codex, &events))
+    }
+}
+
+#[derive(Debug)]
+struct AppServerState {
+    next_attempt_at: chrono::DateTime<Utc>,
+}
+
+impl Default for AppServerState {
+    fn default() -> Self {
+        Self {
+            next_attempt_at: Utc::now(),
+        }
+    }
+}
+
+impl AppServerState {
+    fn should_try(&self) -> bool {
+        Utc::now() >= self.next_attempt_at
+    }
+
+    fn register_success(&mut self) {
+        self.next_attempt_at = Utc::now();
+    }
+
+    fn register_failure(&mut self) {
+        self.next_attempt_at = Utc::now() + Duration::minutes(10);
     }
 }
 

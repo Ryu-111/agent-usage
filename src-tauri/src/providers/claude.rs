@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use crate::core::model::{Agent, SnapshotSource, TokenEvent, UsageSnapshot, UsageWindow};
 use crate::providers::claude_hook::{cache_file_path, read_hook_cache, HOOK_CACHE_MAX_AGE};
 use crate::providers::creds::read_claude_credentials;
-use crate::providers::jsonl::read_token_events;
+use crate::providers::jsonl::read_recent_token_events;
 use crate::providers::rate_limits::merge_rate_limits_with_local;
 
 static OFFICIAL_USAGE_STATE: OnceLock<Mutex<OfficialUsageState>> = OnceLock::new();
@@ -16,6 +16,7 @@ static OFFICIAL_USAGE_STATE: OnceLock<Mutex<OfficialUsageState>> = OnceLock::new
 #[derive(Debug, Clone)]
 pub struct ClaudeProvider {
     projects_pattern: Option<String>,
+    desktop_patterns: Vec<String>,
     hook_cache_path: Option<std::path::PathBuf>,
     client: reqwest::Client,
 }
@@ -26,6 +27,7 @@ impl Default for ClaudeProvider {
             dirs::home_dir().map(|home| format!("{}/.claude/projects/**/*.jsonl", home.display()));
         Self {
             projects_pattern,
+            desktop_patterns: default_desktop_patterns(),
             hook_cache_path: cache_file_path(),
             client: reqwest::Client::new(),
         }
@@ -36,6 +38,7 @@ impl ClaudeProvider {
     pub fn with_projects_pattern(pattern: String) -> Self {
         Self {
             projects_pattern: Some(pattern),
+            desktop_patterns: Vec::new(),
             hook_cache_path: cache_file_path(),
             client: reqwest::Client::new(),
         }
@@ -62,10 +65,14 @@ impl ClaudeProvider {
     }
 
     fn local_snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {
-        let events = match &self.projects_pattern {
-            Some(pattern) => read_token_events(pattern)?,
-            None => Vec::new(),
-        };
+        let mut events = Vec::new();
+        if let Some(pattern) = &self.projects_pattern {
+            events.extend(read_recent_token_events(pattern, Duration::days(8))?);
+        }
+        for pattern in &self.desktop_patterns {
+            events.extend(read_recent_token_events(pattern, Duration::days(8))?);
+        }
+        events.sort_by_key(|event| event.timestamp);
         Ok(local_windows(Agent::ClaudeCode, &events))
     }
 
@@ -115,6 +122,20 @@ impl ClaudeProvider {
         state.register_success(snapshots.clone(), now);
         Ok(Some(snapshots))
     }
+}
+
+fn default_desktop_patterns() -> Vec<String> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let base = home.join("Library/Application Support/Claude");
+    vec![
+        format!("{}/claude-code-sessions/**/local_*.json", base.display()),
+        format!(
+            "{}/local-agent-mode-sessions/**/local_*.json",
+            base.display()
+        ),
+    ]
 }
 
 #[derive(Debug, Clone)]

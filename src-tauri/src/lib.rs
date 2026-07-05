@@ -10,12 +10,22 @@ use core::model::{AgentUsage, AppSnapshot};
 use core::scheduler::{Scheduler, SchedulerConfig};
 use providers::claude::ClaudeProvider;
 use providers::codex::CodexProvider;
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::RwLock;
 
 #[derive(Clone)]
 pub struct AppState {
     latest: Arc<RwLock<Option<AppSnapshot>>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeHookStatus {
+    installed: bool,
+    cache_exists: bool,
+    cache_fresh: bool,
+    cache_path: Option<String>,
 }
 
 impl AppState {
@@ -38,6 +48,12 @@ async fn refresh_usage<R: Runtime>(
     app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
 ) -> Result<AppSnapshot, String> {
+    if let Some(snapshot) = state.latest.read().await.clone() {
+        if chrono::Utc::now() - snapshot.captured_at < chrono::Duration::seconds(30) {
+            return Ok(snapshot);
+        }
+    }
+
     let snapshot = collect_snapshot().await.map_err(|err| err.to_string())?;
     *state.latest.write().await = Some(snapshot.clone());
     let _ = app.emit("usage://snapshot", &snapshot);
@@ -72,6 +88,36 @@ async fn is_claude_rate_limits_hook_installed() -> Result<bool, String> {
 }
 
 #[tauri::command]
+async fn get_claude_rate_limits_hook_status() -> Result<ClaudeHookStatus, String> {
+    let installed = match providers::claude_hook::default_claude_settings_path() {
+        Some(settings_path) => providers::claude_hook::is_claude_hook_installed(&settings_path)
+            .map_err(|err| err.to_string())?,
+        None => false,
+    };
+    let cache_path = providers::claude_hook::cache_file_path();
+    let cache_exists = cache_path.as_ref().is_some_and(|path| path.exists());
+    let cache_fresh = cache_path
+        .as_ref()
+        .map(|path| {
+            providers::claude_hook::read_hook_cache(
+                path,
+                providers::claude_hook::HOOK_CACHE_MAX_AGE,
+            )
+            .map(|reading| reading.is_some())
+        })
+        .transpose()
+        .map_err(|err| err.to_string())?
+        .unwrap_or(false);
+
+    Ok(ClaudeHookStatus {
+        installed,
+        cache_exists,
+        cache_fresh,
+        cache_path: cache_path.map(|path| path.display().to_string()),
+    })
+}
+
+#[tauri::command]
 async fn show_dashboard<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         window.show().map_err(|err| err.to_string())?;
@@ -86,6 +132,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_usage_snapshot,
             install_claude_rate_limits_hook,
+            get_claude_rate_limits_hook_status,
             is_claude_rate_limits_hook_installed,
             refresh_usage,
             show_dashboard
@@ -108,7 +155,7 @@ async fn bootstrap_scheduler<R: Runtime>(app: AppHandle<R>, state: AppState) -> 
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(120);
+        .unwrap_or(300);
     let scheduler = Scheduler::new(SchedulerConfig {
         interval: Duration::from_secs(interval_secs),
     });

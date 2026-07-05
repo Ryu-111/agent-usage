@@ -63,7 +63,8 @@ pub fn install_claude_hook(
     stop.push(json!({
         "hooks": [{
             "type": "command",
-            "command": command
+            "command": command,
+            "timeout": 5
         }]
     }));
 
@@ -116,7 +117,9 @@ pub fn read_hook_cache(path: &Path, max_age: Duration) -> anyhow::Result<Option<
         return Ok(None);
     }
 
-    let limits = value.pointer("/hook_payload/rate_limits");
+    let limits = value
+        .pointer("/hook_payload/rate_limits")
+        .or_else(|| value.pointer("/hook_payload/rateLimits"));
     let Some(limits) = limits else {
         return Ok(None);
     };
@@ -131,6 +134,7 @@ pub fn read_hook_cache(path: &Path, max_age: Duration) -> anyhow::Result<Option<
         secondary: parse_limit(
             limits
                 .get("seven_day")
+                .or_else(|| limits.get("sevenDay"))
                 .or_else(|| limits.get("weekly"))
                 .or_else(|| limits.get("secondary")),
         ),
@@ -188,6 +192,7 @@ fn replace_existing_hook_command(settings: &mut Value, script_path: &Path, comma
             if existing.contains(script_name) {
                 if let Some(object) = hook.as_object_mut() {
                     object.insert("command".to_string(), Value::String(command.to_string()));
+                    object.insert("timeout".to_string(), Value::Number(5.into()));
                     replaced = true;
                 }
             }

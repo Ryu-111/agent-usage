@@ -1,17 +1,56 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::time::SystemTime;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use glob::glob;
 use serde_json::Value;
 
 use crate::core::model::TokenEvent;
 
+const MAX_EVENT_LINE_BYTES: usize = 1_000_000;
+
 pub fn read_token_events(pattern: &str) -> anyhow::Result<Vec<TokenEvent>> {
+    read_token_events_since(pattern, None)
+}
+
+pub fn read_recent_token_events(
+    pattern: &str,
+    max_age: Duration,
+) -> anyhow::Result<Vec<TokenEvent>> {
+    read_token_events_since(pattern, max_age.to_std().ok())
+}
+
+fn read_token_events_since(
+    pattern: &str,
+    max_age: Option<std::time::Duration>,
+) -> anyhow::Result<Vec<TokenEvent>> {
     let mut events = Vec::new();
-    for entry in glob(pattern)? {
-        let path = entry?;
+    let now = SystemTime::now();
+    let mut paths = Vec::new();
+    for entry in glob(pattern)?.flatten() {
+        if let Some(max_age) = max_age {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let Ok(modified) = metadata.modified() else {
+                continue;
+            };
+            if now.duration_since(modified).is_ok_and(|age| age > max_age) {
+                continue;
+            }
+        }
+        paths.push(entry);
+    }
+
+    paths.sort_by_key(|path| {
+        path.metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    });
+
+    for path in paths.into_iter().rev().take(80) {
         events.extend(read_token_events_file(&path)?);
     }
     events.sort_by_key(|event| event.timestamp);
@@ -23,7 +62,7 @@ pub fn read_token_events_file(path: &Path) -> anyhow::Result<Vec<TokenEvent>> {
     let mut events = Vec::new();
     for line in BufReader::new(file).lines() {
         let line = line?;
-        if line.trim().is_empty() {
+        if line.trim().is_empty() || line.len() > MAX_EVENT_LINE_BYTES {
             continue;
         }
         let value: Value = match serde_json::from_str(&line) {
