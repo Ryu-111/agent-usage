@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::Value;
@@ -77,13 +77,14 @@ impl ClaudeProvider {
         for pattern in &self.desktop_patterns {
             events.extend(read_recent_token_events(pattern, Duration::days(8))?);
         }
+        events.sort_by_key(|event| event.timestamp);
+        let mut windows = local_windows(Agent::ClaudeCode, &events);
         if let Some(path) = &self.desktop_tokens_path {
-            if let Some(event) = read_desktop_tokens_today(path)? {
-                events.push(event);
+            if let Some(tokens) = read_desktop_tokens_today(path)? {
+                merge_desktop_tokens_into_weekly(&mut windows, tokens);
             }
         }
-        events.sort_by_key(|event| event.timestamp);
-        Ok(local_windows(Agent::ClaudeCode, &events))
+        Ok(windows)
     }
 
     fn hook_snapshot(&self) -> anyhow::Result<Option<Vec<UsageSnapshot>>> {
@@ -152,7 +153,7 @@ pub fn default_desktop_tokens_path() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join("Library/Application Support/Claude/buddy-tokens.json"))
 }
 
-pub fn read_desktop_tokens_today(path: &Path) -> anyhow::Result<Option<TokenEvent>> {
+pub fn read_desktop_tokens_today(path: &Path) -> anyhow::Result<Option<u64>> {
     let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -174,18 +175,24 @@ pub fn read_desktop_tokens_today(path: &Path) -> anyhow::Result<Option<TokenEven
     let Ok(date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
         return Ok(None);
     };
-    let now = Utc::now();
-    let timestamp = if date == now.date_naive() {
-        now
-    } else {
-        Utc.from_utc_datetime(
-            &date
-                .and_hms_opt(12, 0, 0)
-                .expect("valid noon time for desktop token date"),
-        )
-    };
+    if date != Utc::now().date_naive() {
+        return Ok(None);
+    }
 
-    Ok(Some(TokenEvent { timestamp, tokens }))
+    Ok(Some(tokens))
+}
+
+fn merge_desktop_tokens_into_weekly(windows: &mut [UsageSnapshot], tokens: u64) {
+    let Some(weekly) = windows
+        .iter_mut()
+        .find(|snapshot| snapshot.window == UsageWindow::Weekly)
+    else {
+        return;
+    };
+    weekly.used_tokens = Some(weekly.used_tokens.unwrap_or(0).saturating_add(tokens));
+    if weekly.source == SnapshotSource::Unavailable {
+        weekly.source = SnapshotSource::LocalEstimate;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -476,9 +483,9 @@ mod tests {
         )
         .unwrap();
 
-        let event = super::read_desktop_tokens_today(&path).unwrap().unwrap();
+        let tokens = super::read_desktop_tokens_today(&path).unwrap().unwrap();
 
-        assert_eq!(event.tokens, 51_412);
+        assert_eq!(tokens, 51_412);
         let _ = std::fs::remove_dir_all(root);
     }
 

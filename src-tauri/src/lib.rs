@@ -29,6 +29,7 @@ struct ClaudeHookStatus {
     desktop_tokens_exists: bool,
     desktop_tokens_fresh: bool,
     desktop_tokens_path: Option<String>,
+    desktop_bridge_enabled: bool,
 }
 
 impl AppState {
@@ -121,6 +122,7 @@ async fn get_claude_rate_limits_hook_status() -> Result<ClaudeHookStatus, String
         .transpose()
         .map_err(|err| err.to_string())?
         .unwrap_or(false);
+    let desktop_bridge_enabled = is_claude_desktop_bridge_enabled().unwrap_or(false);
 
     Ok(ClaudeHookStatus {
         installed,
@@ -130,6 +132,7 @@ async fn get_claude_rate_limits_hook_status() -> Result<ClaudeHookStatus, String
         desktop_tokens_exists,
         desktop_tokens_fresh,
         desktop_tokens_path: desktop_tokens_path.map(|path| path.display().to_string()),
+        desktop_bridge_enabled,
     })
 }
 
@@ -183,9 +186,22 @@ async fn bootstrap_scheduler<R: Runtime>(app: AppHandle<R>, state: AppState) -> 
             let store = store.clone();
             async move {
                 let snapshot = collect_snapshot().await?;
-                store.insert_app_snapshot(&snapshot)?;
-                *state.latest.write().await = Some(snapshot.clone());
-                let _ = app.emit("usage://snapshot", &snapshot);
+                let should_publish = {
+                    let mut latest = state.latest.write().await;
+                    if latest
+                        .as_ref()
+                        .is_some_and(|previous| snapshots_equivalent(previous, &snapshot))
+                    {
+                        false
+                    } else {
+                        *latest = Some(snapshot.clone());
+                        true
+                    }
+                };
+                if should_publish {
+                    store.insert_app_snapshot(&snapshot)?;
+                    let _ = app.emit("usage://snapshot", &snapshot);
+                }
                 Ok(())
             }
         })
@@ -210,4 +226,43 @@ async fn collect_snapshot() -> anyhow::Result<AppSnapshot> {
             },
         ],
     })
+}
+
+fn snapshots_equivalent(left: &AppSnapshot, right: &AppSnapshot) -> bool {
+    normalize_agents_for_compare(&left.agents) == normalize_agents_for_compare(&right.agents)
+}
+
+fn normalize_agents_for_compare(agents: &[AgentUsage]) -> Vec<AgentUsage> {
+    let mut agents = agents.to_vec();
+    for agent in &mut agents {
+        for window in &mut agent.windows {
+            window.observed_at = None;
+        }
+        agent
+            .windows
+            .sort_by_key(|window| (window.agent, window.window));
+    }
+    agents.sort_by_key(|agent| agent.agent);
+    agents
+}
+
+fn is_claude_desktop_bridge_enabled() -> anyhow::Result<bool> {
+    let Some(home) = dirs::home_dir() else {
+        return Ok(false);
+    };
+    let path = home.join("Library/Application Support/Claude/bridge-state.json");
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let value: serde_json::Value = serde_json::from_str(&content)?;
+    Ok(value.as_object().is_some_and(|sessions| {
+        sessions.values().any(|session| {
+            session
+                .get("enabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        })
+    }))
 }

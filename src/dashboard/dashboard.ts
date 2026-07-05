@@ -31,6 +31,7 @@ interface ClaudeHookStatus {
   desktopTokensExists: boolean;
   desktopTokensFresh: boolean;
   desktopTokensPath: string | null;
+  desktopBridgeEnabled: boolean;
 }
 
 function percent(snapshot: UsageSnapshot): number {
@@ -165,6 +166,8 @@ async function loadHookSettings(): Promise<void> {
         text.textContent = "Claude Code hook waiting for fresh rate-limit data";
       } else if (hookStatus.desktopTokensExists) {
         text.textContent = "Claude Desktop token cache is present but stale";
+      } else if (hookStatus.desktopBridgeEnabled) {
+        text.textContent = "Claude Desktop bridge detected. Waiting for token cache data.";
       } else {
         text.textContent =
           "Claude Code hook installed. Run one Claude Code Desktop turn to create the cache.";
