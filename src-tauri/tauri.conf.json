@@ -14,18 +14,6 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "label": "main",
-        "title": "Agent Usage",
-        "url": "/src/dashboard/index.html",
-        "width": 1080,
-        "height": 760,
-        "minWidth": 860,
-        "minHeight": 620,
-        "visible": true,
-        "decorations": true,
-        "transparent": false
-      },
-      {
         "label": "hud",
         "title": "Agent Usage HUD",
         "url": "/src/hud/index.html",

@@ -11,7 +11,7 @@ use core::scheduler::{Scheduler, SchedulerConfig};
 use providers::claude::ClaudeProvider;
 use providers::codex::CodexProvider;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::RwLock;
 
 #[derive(Clone)]
@@ -138,10 +138,22 @@ async fn get_claude_rate_limits_hook_status() -> Result<ClaudeHookStatus, String
 
 #[tauri::command]
 async fn show_dashboard<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("main") {
-        window.show().map_err(|err| err.to_string())?;
-        window.set_focus().map_err(|err| err.to_string())?;
-    }
+    let window = match app.get_webview_window("main") {
+        Some(window) => window,
+        None => WebviewWindowBuilder::new(
+            &app,
+            "main",
+            WebviewUrl::App("/src/dashboard/index.html".into()),
+        )
+        .title("Agent Usage")
+        .inner_size(1080.0, 760.0)
+        .min_inner_size(860.0, 620.0)
+        .visible(false)
+        .build()
+        .map_err(|err| err.to_string())?,
+    };
+    window.show().map_err(|err| err.to_string())?;
+    window.set_focus().map_err(|err| err.to_string())?;
     Ok(())
 }
 
