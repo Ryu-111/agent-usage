@@ -56,17 +56,17 @@ impl ClaudeProvider {
     }
 
     pub async fn snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {
-        let local = self.local_snapshot()?;
-
         if let Some(hook) = self.hook_snapshot()? {
+            let local = self.local_snapshot()?;
             return Ok(merge_rate_limits_with_local(hook, local));
         }
 
         if let Ok(Some(official)) = self.official_snapshot().await {
+            let local = self.local_snapshot()?;
             return Ok(merge_rate_limits_with_local(official, local));
         }
 
-        Ok(local)
+        self.local_snapshot()
     }
 
     fn local_snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {

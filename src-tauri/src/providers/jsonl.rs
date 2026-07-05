@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::core::model::TokenEvent;
 
 const MAX_EVENT_LINE_BYTES: usize = 1_000_000;
-const RECENT_EVENTS_CACHE_TTL: StdDuration = StdDuration::from_secs(120);
+const RECENT_EVENTS_CACHE_TTL: StdDuration = StdDuration::from_secs(600);
 
 static RECENT_EVENTS_CACHE: OnceLock<Mutex<HashMap<String, CachedEvents>>> = OnceLock::new();
 

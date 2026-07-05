@@ -56,11 +56,10 @@ impl CodexProvider {
     }
 
     pub async fn snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {
-        let local = self.local_snapshot()?;
-
         if let Some(root) = &self.sessions_root {
             if let Some(reading) = read_latest_rate_limits(root)? {
                 let rate_limits = reading.into_snapshots(Agent::Codex);
+                let local = self.local_snapshot()?;
                 return Ok(merge_rate_limits_with_local(rate_limits, local));
             }
         }
@@ -76,6 +75,7 @@ impl CodexProvider {
                     Ok(reading) => {
                         state_lock.lock().await.register_success();
                         let rate_limits = reading.into_snapshots(Agent::Codex);
+                        let local = self.local_snapshot()?;
                         return Ok(merge_rate_limits_with_local(rate_limits, local));
                     }
                     Err(_) => state_lock.lock().await.register_failure(),
@@ -83,7 +83,7 @@ impl CodexProvider {
             }
         }
 
-        Ok(local)
+        self.local_snapshot()
     }
 
     fn local_snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {
