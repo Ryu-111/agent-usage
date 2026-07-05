@@ -19,6 +19,9 @@ pub enum UsageWindow {
 #[serde(rename_all = "camelCase")]
 pub enum SnapshotSource {
     Official,
+    OfficialCli,
+    SessionLog,
+    HookCache,
     LocalEstimate,
     Unavailable,
 }
@@ -33,6 +36,7 @@ pub struct UsageSnapshot {
     pub burn_rate_tokens_per_min: Option<f64>,
     pub reset_at: Option<DateTime<Utc>>,
     pub limit_reached_at: Option<DateTime<Utc>>,
+    pub observed_at: Option<DateTime<Utc>>,
     pub source: SnapshotSource,
 }
 

@@ -1,11 +1,27 @@
 import "../shared/base.css";
 import "./dashboard.css";
-import { agentLabel, windowLabel, type AppSnapshot, type UsageSnapshot } from "../shared/types";
-import { demoSnapshot, invokeCommand, listenSnapshot } from "../shared/tauri";
+import {
+  agentLabel,
+  sourceLabel,
+  windowLabel,
+  type AppSnapshot,
+  type UsageSnapshot
+} from "../shared/types";
+import {
+  invokeCommand,
+  isBrowserPreview,
+  listenSnapshot,
+  loadLiveSnapshot,
+  previewSnapshot,
+  refreshLiveSnapshot,
+  unavailableSnapshot
+} from "../shared/tauri";
 
 const rings = document.querySelector<HTMLDivElement>("#rings");
 const burnRates = document.querySelector<HTMLDivElement>("#burn-rates");
 const refresh = document.querySelector<HTMLButtonElement>("#refresh");
+const status = document.querySelector<HTMLParagraphElement>("#status");
+const hookSettings = document.querySelector<HTMLElement>("#hook-settings");
 
 function percent(snapshot: UsageSnapshot): number {
   if (typeof snapshot.utilizationPct === "number") {
@@ -18,11 +34,11 @@ function percent(snapshot: UsageSnapshot): number {
   return Math.max(0, Math.min(100, (snapshot.usedTokens / softCeiling) * 100));
 }
 
-function formatTokens(value: number | null): string {
-  if (!value) {
+function formatTokens(snapshot: UsageSnapshot): string {
+  if (snapshot.source === "unavailable" || snapshot.usedTokens === null) {
     return "No data";
   }
-  return new Intl.NumberFormat(undefined, { notation: "compact" }).format(value);
+  return new Intl.NumberFormat(undefined, { notation: "compact" }).format(snapshot.usedTokens);
 }
 
 function formatReset(value: string | null): string {
@@ -39,6 +55,29 @@ function formatReset(value: string | null): string {
   return `${minutes}m to reset`;
 }
 
+function formatAge(value: string | null): string {
+  if (!value) {
+    return "";
+  }
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60_000));
+  if (minutes <= 2) {
+    return "";
+  }
+  if (minutes >= 1440) {
+    return ` · ${Math.round(minutes / 1440)}d old`;
+  }
+  if (minutes >= 60) {
+    return ` · ${Math.round(minutes / 60)}h old`;
+  }
+  return ` · ${minutes}m old`;
+}
+
+function setStatus(message: string): void {
+  if (status) {
+    status.textContent = message;
+  }
+}
+
 function render(snapshot: AppSnapshot): void {
   if (!rings || !burnRates) {
     return;
@@ -49,6 +88,7 @@ function render(snapshot: AppSnapshot): void {
     ...windows.map((usage) => {
       const card = document.createElement("article");
       card.className = "ring-card";
+      card.dataset.source = usage.source;
       const pct = percent(usage);
       card.innerHTML = `
         <div class="ring" style="--pct: ${pct}">
@@ -56,8 +96,8 @@ function render(snapshot: AppSnapshot): void {
         </div>
         <div>
           <h2>${agentLabel[usage.agent]}</h2>
-          <p>${windowLabel[usage.window]} · ${usage.source}</p>
-          <strong>${formatTokens(usage.usedTokens)}</strong>
+          <p>${windowLabel[usage.window]} · ${sourceLabel[usage.source]}${formatAge(usage.observedAt)}</p>
+          <strong>${formatTokens(usage)}</strong>
           <small>${formatReset(usage.resetAt)}</small>
         </div>
       `;
@@ -69,9 +109,13 @@ function render(snapshot: AppSnapshot): void {
     ...windows.map((usage) => {
       const row = document.createElement("div");
       row.className = "metric-row";
+      const burnRate =
+        usage.source === "unavailable"
+          ? "No data"
+          : `${Math.round(usage.burnRateTokensPerMin ?? 0).toLocaleString()} tok/min`;
       row.innerHTML = `
         <span>${agentLabel[usage.agent]} ${windowLabel[usage.window]}</span>
-        <strong>${Math.round(usage.burnRateTokensPerMin ?? 0).toLocaleString()} tok/min</strong>
+        <strong>${burnRate}</strong>
       `;
       return row;
     })
@@ -79,17 +123,55 @@ function render(snapshot: AppSnapshot): void {
 }
 
 async function load(): Promise<void> {
+  setStatus("Loading live usage...");
   try {
-    const snapshot = await invokeCommand<AppSnapshot | null>("get_usage_snapshot");
-    render(snapshot ?? demoSnapshot());
+    render(await loadLiveSnapshot());
+    setStatus("Live usage connected");
   } catch {
-    render(demoSnapshot());
+    render(isBrowserPreview() ? previewSnapshot() : unavailableSnapshot());
+    setStatus(isBrowserPreview() ? "Browser preview data" : "Live usage unavailable");
+  }
+}
+
+async function loadHookSettings(): Promise<void> {
+  if (!hookSettings || isBrowserPreview()) {
+    hookSettings?.replaceChildren();
+    return;
+  }
+  try {
+    const installed = await invokeCommand<boolean>("is_claude_rate_limits_hook_installed");
+    hookSettings.replaceChildren();
+    if (installed) {
+      hookSettings.textContent = "Claude Code hook enabled";
+      return;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary-button";
+    button.textContent = "Enable Claude Code hook";
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      hookSettings.textContent = "Enabling Claude Code hook...";
+      try {
+        await invokeCommand("install_claude_rate_limits_hook");
+        await loadHookSettings();
+      } catch {
+        hookSettings.textContent = "Claude Code hook setup failed";
+      }
+    });
+    const text = document.createElement("span");
+    text.textContent = "Use Claude Code hook for fresher limits and fewer API calls";
+    hookSettings.append(button, text);
+  } catch {
+    hookSettings.replaceChildren();
   }
 }
 
 refresh?.addEventListener("click", async () => {
+  setStatus("Refreshing live usage...");
   try {
-    render(await invokeCommand<AppSnapshot>("refresh_usage"));
+    render(await refreshLiveSnapshot());
+    setStatus("Live usage connected");
   } catch {
     await load();
   }
@@ -97,3 +179,4 @@ refresh?.addEventListener("click", async () => {
 
 void listenSnapshot(render).catch(() => undefined);
 void load();
+void loadHookSettings();

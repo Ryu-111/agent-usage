@@ -50,13 +50,28 @@ pub fn extract_timestamp(value: &Value) -> Option<DateTime<Utc>> {
 }
 
 pub fn extract_tokens(value: &Value) -> Option<u64> {
-    let direct_paths = [
+    let total_paths = [
         "/total_tokens",
         "/usage/total_tokens",
         "/message/usage/total_tokens",
         "/response/usage/total_tokens",
+        "/payload/info/last_token_usage/total_tokens",
+        "/payload/info/total_token_usage/total_tokens",
+    ];
+    if let Some(total) = total_paths
+        .iter()
+        .find_map(|path| value.pointer(path).and_then(Value::as_u64))
+    {
+        return Some(total);
+    }
+
+    let direct_paths = [
         "/usage/input_tokens",
         "/usage/output_tokens",
+        "/payload/info/last_token_usage/input_tokens",
+        "/payload/info/last_token_usage/output_tokens",
+        "/payload/info/last_token_usage/reasoning_output_tokens",
+        "/payload/info/last_token_usage/cached_input_tokens",
     ];
 
     let direct_sum: u64 = direct_paths
@@ -80,6 +95,7 @@ pub fn extract_tokens(value: &Value) -> Option<u64> {
     let cached = value
         .pointer("/usage/cache_creation_input_tokens")
         .or_else(|| value.pointer("/usage/cache_read_input_tokens"))
+        .or_else(|| value.pointer("/payload/info/last_token_usage/cached_input_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let total = input + output + cached;
@@ -104,5 +120,24 @@ mod tests {
         });
 
         assert_eq!(extract_tokens(&value), Some(150));
+    }
+
+    #[test]
+    fn reads_codex_payload_last_token_usage() {
+        let value = json!({
+            "payload": {
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": 120,
+                        "cached_input_tokens": 30,
+                        "output_tokens": 40,
+                        "reasoning_output_tokens": 10,
+                        "total_tokens": 200
+                    }
+                }
+            }
+        });
+
+        assert_eq!(extract_tokens(&value), Some(200));
     }
 }

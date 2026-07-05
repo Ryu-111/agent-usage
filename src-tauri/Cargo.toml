@@ -34,7 +34,7 @@ tauri-runtime-wry = "=2.0.0"
 tauri-utils = "=2.0.0"
 thiserror = "=1.0.69"
 time = "=0.3.36"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "time"] }
 url = "=2.5.4"
 idna_adapter = "=1.0.0"
 indexmap = "=2.6.0"

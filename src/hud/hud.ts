@@ -1,7 +1,14 @@
 import "../shared/base.css";
 import "./hud.css";
 import { agentLabel, windowLabel, type AppSnapshot, type UsageSnapshot } from "../shared/types";
-import { demoSnapshot, invokeCommand, listenSnapshot } from "../shared/tauri";
+import {
+  invokeCommand,
+  isBrowserPreview,
+  listenSnapshot,
+  loadLiveSnapshot,
+  previewSnapshot,
+  unavailableSnapshot
+} from "../shared/tauri";
 
 const hud = document.querySelector<HTMLElement>("#hud");
 const rows = document.querySelector<HTMLDivElement>("#rows");
@@ -39,6 +46,13 @@ function formatReset(value: string | null): string {
   return `Reset ${clock} · ${minutes}m`;
 }
 
+function formatDetail(snapshot: UsageSnapshot): string {
+  if (snapshot.source === "unavailable") {
+    return "Unavailable";
+  }
+  return formatReset(snapshot.resetAt);
+}
+
 function render(snapshot: AppSnapshot): void {
   if (!rows || !updated) {
     return;
@@ -67,7 +81,7 @@ function render(snapshot: AppSnapshot): void {
       row.innerHTML = `
         <span>${agentLabel[usage.agent]} ${windowLabel[usage.window]}</span>
         <strong>${Math.round(pct)}%</strong>
-        <small>${formatReset(usage.resetAt)}</small>
+        <small>${formatDetail(usage)}</small>
         <i style="--pct: ${pct}%"></i>
       `;
       return row;
@@ -137,10 +151,13 @@ hud?.addEventListener("mousedown", (event) => {
 });
 
 async function load(): Promise<void> {
+  if (updated) {
+    updated.textContent = "Loading";
+  }
   try {
-    render((await invokeCommand<AppSnapshot | null>("get_usage_snapshot")) ?? demoSnapshot());
+    render(await loadLiveSnapshot());
   } catch {
-    render(demoSnapshot());
+    render(isBrowserPreview() ? previewSnapshot() : unavailableSnapshot());
   }
 }
 

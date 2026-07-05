@@ -12,11 +12,13 @@
         <div>
           <p class="eyebrow">Agent Usage</p>
           <h1>Rate limit dashboard</h1>
+          <p id="status" class="status">Loading live usage...</p>
         </div>
         <button id="refresh" class="icon-button" title="Refresh usage" aria-label="Refresh usage">
           <span aria-hidden="true">↻</span>
         </button>
       </header>
+      <section id="hook-settings" class="settings-row" aria-live="polite"></section>
       <section id="rings" class="ring-grid" aria-label="Usage rings"></section>
       <section class="panels">
         <div>

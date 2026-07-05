@@ -25,6 +25,39 @@ h1 {
   margin: 0;
 }
 
+.status {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
+.settings-row {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 13px;
+  gap: 12px;
+  min-height: 36px;
+  margin: 0 0 16px;
+}
+
+.secondary-button {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  min-height: 32px;
+  padding: 0 12px;
+}
+
+.secondary-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .icon-button {
   align-items: center;
   background: var(--panel);
@@ -85,6 +118,12 @@ h1 {
   color: var(--muted);
   display: block;
   margin: 0;
+}
+
+.ring-card[data-source="unavailable"] .ring {
+  background:
+    radial-gradient(circle at center, var(--panel) 58%, transparent 59%),
+    conic-gradient(rgba(255,255,255,0.18) 100%, rgba(255,255,255,0.08) 0);
 }
 
 .ring-card strong {
