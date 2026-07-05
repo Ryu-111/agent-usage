@@ -58,6 +58,13 @@ impl CodexProvider {
     pub async fn snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {
         let local = self.local_snapshot()?;
 
+        if let Some(root) = &self.sessions_root {
+            if let Some(reading) = read_latest_rate_limits(root)? {
+                let rate_limits = reading.into_snapshots(Agent::Codex);
+                return Ok(merge_rate_limits_with_local(rate_limits, local));
+            }
+        }
+
         if let Some(app_server) = &self.app_server {
             let state_lock = APP_SERVER_STATE.get_or_init(|| Mutex::new(AppServerState::default()));
             let should_try = {
@@ -73,13 +80,6 @@ impl CodexProvider {
                     }
                     Err(_) => state_lock.lock().await.register_failure(),
                 }
-            }
-        }
-
-        if let Some(root) = &self.sessions_root {
-            if let Some(reading) = read_latest_rate_limits(root)? {
-                let rate_limits = reading.into_snapshots(Agent::Codex);
-                return Ok(merge_rate_limits_with_local(rate_limits, local));
             }
         }
 
@@ -114,7 +114,7 @@ impl AppServerState {
     }
 
     fn register_success(&mut self) {
-        self.next_attempt_at = Utc::now();
+        self.next_attempt_at = Utc::now() + Duration::minutes(15);
     }
 
     fn register_failure(&mut self) {
@@ -134,9 +134,11 @@ fn default_sessions_root() -> Option<PathBuf> {
 mod tests {
     use std::fs;
 
+    use chrono::Utc;
+
     use crate::core::model::SnapshotSource;
 
-    use super::CodexProvider;
+    use super::{AppServerState, CodexProvider};
 
     #[tokio::test]
     async fn uses_session_log_rate_limits_when_app_server_is_disabled() {
@@ -161,5 +163,15 @@ mod tests {
         assert_eq!(snapshots[0].used_tokens, Some(200));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn app_server_success_sets_low_frequency_cooldown() {
+        let mut state = AppServerState::default();
+
+        state.register_success();
+
+        assert!(!state.should_try());
+        assert!(state.next_attempt_at - Utc::now() > chrono::Duration::minutes(14));
     }
 }

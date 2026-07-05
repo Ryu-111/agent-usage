@@ -53,7 +53,7 @@ async fn refresh_usage<R: Runtime>(
     state: tauri::State<'_, AppState>,
 ) -> Result<AppSnapshot, String> {
     if let Some(snapshot) = state.latest.read().await.clone() {
-        if chrono::Utc::now() - snapshot.captured_at < chrono::Duration::seconds(30) {
+        if chrono::Utc::now() - snapshot.captured_at < chrono::Duration::seconds(120) {
             return Ok(snapshot);
         }
     }
