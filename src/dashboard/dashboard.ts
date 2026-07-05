@@ -28,6 +28,9 @@ interface ClaudeHookStatus {
   cacheExists: boolean;
   cacheFresh: boolean;
   cachePath: string | null;
+  desktopTokensExists: boolean;
+  desktopTokensFresh: boolean;
+  desktopTokensPath: string | null;
 }
 
 function percent(snapshot: UsageSnapshot): number {
@@ -152,11 +155,20 @@ async function loadHookSettings(): Promise<void> {
       hookSettings.textContent = "Claude Code hook connected";
       return;
     }
+    if (hookStatus.desktopTokensFresh) {
+      hookSettings.textContent = "Claude Desktop token cache connected";
+      return;
+    }
     if (hookStatus.installed) {
       const text = document.createElement("span");
-      text.textContent = hookStatus.cacheExists
-        ? "Claude Code hook waiting for fresh rate-limit data"
-        : "Claude Code hook installed. Run one Claude Code Desktop turn to create the cache.";
+      if (hookStatus.cacheExists) {
+        text.textContent = "Claude Code hook waiting for fresh rate-limit data";
+      } else if (hookStatus.desktopTokensExists) {
+        text.textContent = "Claude Desktop token cache is present but stale";
+      } else {
+        text.textContent =
+          "Claude Code hook installed. Run one Claude Code Desktop turn to create the cache.";
+      }
       const repair = document.createElement("button");
       repair.type = "button";
       repair.className = "secondary-button";

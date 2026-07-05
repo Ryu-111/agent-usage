@@ -1,8 +1,10 @@
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use reqwest::StatusCode;
 use serde::Deserialize;
+use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::core::model::{Agent, SnapshotSource, TokenEvent, UsageSnapshot, UsageWindow};
@@ -17,6 +19,7 @@ static OFFICIAL_USAGE_STATE: OnceLock<Mutex<OfficialUsageState>> = OnceLock::new
 pub struct ClaudeProvider {
     projects_pattern: Option<String>,
     desktop_patterns: Vec<String>,
+    desktop_tokens_path: Option<PathBuf>,
     hook_cache_path: Option<std::path::PathBuf>,
     client: reqwest::Client,
 }
@@ -28,6 +31,7 @@ impl Default for ClaudeProvider {
         Self {
             projects_pattern,
             desktop_patterns: default_desktop_patterns(),
+            desktop_tokens_path: default_desktop_tokens_path(),
             hook_cache_path: cache_file_path(),
             client: reqwest::Client::new(),
         }
@@ -39,6 +43,7 @@ impl ClaudeProvider {
         Self {
             projects_pattern: Some(pattern),
             desktop_patterns: Vec::new(),
+            desktop_tokens_path: None,
             hook_cache_path: cache_file_path(),
             client: reqwest::Client::new(),
         }
@@ -71,6 +76,11 @@ impl ClaudeProvider {
         }
         for pattern in &self.desktop_patterns {
             events.extend(read_recent_token_events(pattern, Duration::days(8))?);
+        }
+        if let Some(path) = &self.desktop_tokens_path {
+            if let Some(event) = read_desktop_tokens_today(path)? {
+                events.push(event);
+            }
         }
         events.sort_by_key(|event| event.timestamp);
         Ok(local_windows(Agent::ClaudeCode, &events))
@@ -136,6 +146,46 @@ fn default_desktop_patterns() -> Vec<String> {
             base.display()
         ),
     ]
+}
+
+pub fn default_desktop_tokens_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join("Library/Application Support/Claude/buddy-tokens.json"))
+}
+
+pub fn read_desktop_tokens_today(path: &Path) -> anyhow::Result<Option<TokenEvent>> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let value: Value = serde_json::from_str(&content)?;
+    let Some(tokens_today) = value.get("tokens-today") else {
+        return Ok(None);
+    };
+    let Some(tokens) = tokens_today.get("tokens").and_then(Value::as_u64) else {
+        return Ok(None);
+    };
+    if tokens == 0 {
+        return Ok(None);
+    }
+    let Some(date) = tokens_today.get("date").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Ok(date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
+        return Ok(None);
+    };
+    let now = Utc::now();
+    let timestamp = if date == now.date_naive() {
+        now
+    } else {
+        Utc.from_utc_datetime(
+            &date
+                .and_hms_opt(12, 0, 0)
+                .expect("valid noon time for desktop token date"),
+        )
+    };
+
+    Ok(Some(TokenEvent { timestamp, tokens }))
 }
 
 #[derive(Debug, Clone)]
@@ -409,6 +459,27 @@ mod tests {
         assert_eq!(snapshot.source, SnapshotSource::Unavailable);
         assert_eq!(snapshot.used_tokens, None);
         assert_eq!(snapshot.burn_rate_tokens_per_min, None);
+    }
+
+    #[test]
+    fn reads_desktop_tokens_today_cache() {
+        let root =
+            std::env::temp_dir().join(format!("agent-usage-desktop-tokens-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("buddy-tokens.json");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"tokens-today":{{"date":"{}","tokens":51412}}}}"#,
+                chrono::Utc::now().date_naive()
+            ),
+        )
+        .unwrap();
+
+        let event = super::read_desktop_tokens_today(&path).unwrap().unwrap();
+
+        assert_eq!(event.tokens, 51_412);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn official_window() -> UsageSnapshot {

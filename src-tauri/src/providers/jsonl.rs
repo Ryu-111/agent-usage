@@ -1,7 +1,9 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::time::SystemTime;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration as StdDuration, Instant, SystemTime};
+use std::{collections::HashMap, path::PathBuf};
 
 use chrono::{DateTime, Duration, Utc};
 use glob::glob;
@@ -10,6 +12,15 @@ use serde_json::Value;
 use crate::core::model::TokenEvent;
 
 const MAX_EVENT_LINE_BYTES: usize = 1_000_000;
+const RECENT_EVENTS_CACHE_TTL: StdDuration = StdDuration::from_secs(120);
+
+static RECENT_EVENTS_CACHE: OnceLock<Mutex<HashMap<String, CachedEvents>>> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+struct CachedEvents {
+    fetched_at: Instant,
+    events: Vec<TokenEvent>,
+}
 
 pub fn read_token_events(pattern: &str) -> anyhow::Result<Vec<TokenEvent>> {
     read_token_events_since(pattern, None)
@@ -19,7 +30,19 @@ pub fn read_recent_token_events(
     pattern: &str,
     max_age: Duration,
 ) -> anyhow::Result<Vec<TokenEvent>> {
-    read_token_events_since(pattern, max_age.to_std().ok())
+    let max_age = max_age.to_std().ok();
+    let key = format!(
+        "{}::{}",
+        pattern,
+        max_age.map(|duration| duration.as_secs()).unwrap_or(0)
+    );
+    if let Some(events) = cached_recent_events(&key) {
+        return Ok(events);
+    }
+
+    let events = read_token_events_since(pattern, max_age)?;
+    store_recent_events(key, events.clone());
+    Ok(events)
 }
 
 fn read_token_events_since(
@@ -28,7 +51,7 @@ fn read_token_events_since(
 ) -> anyhow::Result<Vec<TokenEvent>> {
     let mut events = Vec::new();
     let now = SystemTime::now();
-    let mut paths = Vec::new();
+    let mut paths: Vec<PathBuf> = Vec::new();
     for entry in glob(pattern)?.flatten() {
         if let Some(max_age) = max_age {
             let Ok(metadata) = entry.metadata() else {
@@ -55,6 +78,28 @@ fn read_token_events_since(
     }
     events.sort_by_key(|event| event.timestamp);
     Ok(events)
+}
+
+fn cached_recent_events(key: &str) -> Option<Vec<TokenEvent>> {
+    let cache = RECENT_EVENTS_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = cache.lock().expect("recent events cache mutex poisoned");
+    cache
+        .get(key)
+        .filter(|entry| entry.fetched_at.elapsed() <= RECENT_EVENTS_CACHE_TTL)
+        .map(|entry| entry.events.clone())
+}
+
+fn store_recent_events(key: String, events: Vec<TokenEvent>) {
+    let cache = RECENT_EVENTS_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().expect("recent events cache mutex poisoned");
+    cache.retain(|_, entry| entry.fetched_at.elapsed() <= RECENT_EVENTS_CACHE_TTL);
+    cache.insert(
+        key,
+        CachedEvents {
+            fetched_at: Instant::now(),
+            events,
+        },
+    );
 }
 
 pub fn read_token_events_file(path: &Path) -> anyhow::Result<Vec<TokenEvent>> {

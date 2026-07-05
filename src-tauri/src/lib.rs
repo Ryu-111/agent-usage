@@ -26,6 +26,9 @@ struct ClaudeHookStatus {
     cache_exists: bool,
     cache_fresh: bool,
     cache_path: Option<String>,
+    desktop_tokens_exists: bool,
+    desktop_tokens_fresh: bool,
+    desktop_tokens_path: Option<String>,
 }
 
 impl AppState {
@@ -108,12 +111,25 @@ async fn get_claude_rate_limits_hook_status() -> Result<ClaudeHookStatus, String
         .transpose()
         .map_err(|err| err.to_string())?
         .unwrap_or(false);
+    let desktop_tokens_path = providers::claude::default_desktop_tokens_path();
+    let desktop_tokens_exists = desktop_tokens_path
+        .as_ref()
+        .is_some_and(|path| path.exists());
+    let desktop_tokens_fresh = desktop_tokens_path
+        .as_ref()
+        .map(|path| providers::claude::read_desktop_tokens_today(path).map(|event| event.is_some()))
+        .transpose()
+        .map_err(|err| err.to_string())?
+        .unwrap_or(false);
 
     Ok(ClaudeHookStatus {
         installed,
         cache_exists,
         cache_fresh,
         cache_path: cache_path.map(|path| path.display().to_string()),
+        desktop_tokens_exists,
+        desktop_tokens_fresh,
+        desktop_tokens_path: desktop_tokens_path.map(|path| path.display().to_string()),
     })
 }
 
