@@ -18,6 +18,8 @@ tauri-build = { version = "=2.0.0", features = [] }
 
 [dependencies]
 anyhow = "1"
+aes = "0.8"
+cbc = "0.1"
 chrono = { version = "=0.4.38", features = ["serde"] }
 dirs = "=5.0.1"
 glob = "0.3"
@@ -40,6 +42,8 @@ url = "=2.5.4"
 idna_adapter = "=1.0.0"
 indexmap = "=2.6.0"
 hyper-rustls = { version = "=0.27.5", default-features = false, features = ["http1", "tls12", "webpki-roots"] }
+pbkdf2 = "0.12"
+sha1 = "0.10"
 unicode-segmentation = "=1.12.0"
 uuid = "=1.10.0"
 

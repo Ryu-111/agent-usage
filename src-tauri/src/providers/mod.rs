@@ -1,3 +1,4 @@
+pub mod browser_cookies;
 pub mod claude;
 pub mod claude_cli;
 pub mod claude_desktop;

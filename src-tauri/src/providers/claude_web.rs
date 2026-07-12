@@ -47,6 +47,9 @@ fn session_cookie() -> Option<String> {
             return Some(cookie);
         }
     }
+    if let Some(cookie) = crate::providers::browser_cookies::find_claude_session_cookie() {
+        return Some(cookie);
+    }
     let session_key = std::env::var("CLAUDE_SESSION_KEY").ok()?;
     let session_key = session_key.trim();
     (!session_key.is_empty()).then(|| format!("sessionKey={session_key}"))
