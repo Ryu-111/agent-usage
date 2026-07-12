@@ -192,10 +192,25 @@ fn find_claude_binary() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|directory| directory.join("claude"))
-        .find(|candidate| candidate.is_file())
+    if let Some(path) = std::env::var_os("PATH") {
+        if let Some(candidate) = std::env::split_paths(&path)
+            .map(|directory| directory.join("claude"))
+            .find(|candidate| candidate.is_file())
+        {
+            return Some(candidate);
+        }
+    }
+    let mut candidates = vec![
+        PathBuf::from("/opt/homebrew/bin/claude"),
+        PathBuf::from("/usr/local/bin/claude"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        candidates.extend([
+            home.join(".local/bin/claude"),
+            home.join(".claude/local/claude"),
+        ]);
+    }
+    candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
 fn default_desktop_patterns() -> Vec<String> {
