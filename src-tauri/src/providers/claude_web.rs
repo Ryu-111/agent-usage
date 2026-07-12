@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::anyhow;
+use chrono::{DateTime, Utc};
 use reqwest::header::COOKIE;
 use serde_json::Value;
 
@@ -71,24 +72,26 @@ fn organization_id(value: &Value) -> Option<String> {
 }
 
 fn parse_usage(value: &Value) -> Option<Vec<UsageSnapshot>> {
-    let five_hour =
-        find_window(value, &["five_hour", "fiveHour", "session"]).and_then(parse_percent);
-    let weekly =
-        find_window(value, &["seven_day", "sevenDay", "weekly", "week"]).and_then(parse_percent);
-    let observed_at = Some(chrono::Utc::now());
+    let five_hour = find_window(value, &["five_hour", "fiveHour", "session"])
+        .and_then(parse_window)
+        .or_else(|| active_limit(value, "session"));
+    let weekly = find_window(value, &["seven_day", "sevenDay", "weekly", "week"])
+        .and_then(parse_window)
+        .or_else(|| active_limit(value, "weekly"));
+    let observed_at = Some(Utc::now());
     let snapshots = [
         (UsageWindow::FiveHour, five_hour),
         (UsageWindow::Weekly, weekly),
     ]
     .into_iter()
-    .filter_map(|(window, utilization_pct)| {
-        utilization_pct.map(|utilization_pct| UsageSnapshot {
+    .filter_map(|(window, reading)| {
+        reading.map(|(utilization_pct, reset_at)| UsageSnapshot {
             agent: Agent::ClaudeCode,
             window,
             utilization_pct: Some(utilization_pct),
             used_tokens: None,
             burn_rate_tokens_per_min: None,
-            reset_at: None,
+            reset_at,
             limit_reached_at: None,
             observed_at,
             source: SnapshotSource::Web,
@@ -113,8 +116,8 @@ fn find_window<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
     }
 }
 
-fn parse_percent(value: &Value) -> Option<f64> {
-    let value = value
+fn parse_window(value: &Value) -> Option<(f64, Option<DateTime<Utc>>)> {
+    let utilization = value
         .get("utilization")
         .or_else(|| value.get("used_percentage"))
         .or_else(|| value.get("used_percent"))
@@ -122,7 +125,33 @@ fn parse_percent(value: &Value) -> Option<f64> {
         .or_else(|| value.get("percent"))
         .and_then(Value::as_f64)
         .or_else(|| value.as_f64())?;
-    (0.0..=100.0).contains(&value).then_some(value)
+    if !(0.0..=100.0).contains(&utilization) {
+        return None;
+    }
+    let reset_at = value
+        .get("resets_at")
+        .or_else(|| value.get("resetsAt"))
+        .and_then(Value::as_str)
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&Utc));
+    Some((utilization, reset_at))
+}
+
+fn active_limit(value: &Value, group: &str) -> Option<(f64, Option<DateTime<Utc>>)> {
+    let limits = value.get("limits")?.as_array()?;
+    limits.iter().find_map(|limit| {
+        let active = limit
+            .get("is_active")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let matches = limit.get("group").and_then(Value::as_str) == Some(group)
+            || (group == "session" && limit.get("kind").and_then(Value::as_str) == Some("session"));
+        if active && matches {
+            parse_window(limit)
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]
@@ -134,12 +163,29 @@ mod tests {
     #[test]
     fn maps_claude_web_usage_windows() {
         let snapshots = parse_usage(&json!({
-            "five_hour": {"utilization": 12.0},
-            "seven_day": {"used_percentage": 34.0}
+            "five_hour": {"utilization": 12.0, "resets_at": "2026-07-12T19:00:00.021712+00:00"},
+            "seven_day": {"used_percentage": 34.0, "resets_at": "2026-07-14T19:00:00.021733+00:00"}
         }))
         .unwrap();
         assert_eq!(snapshots.len(), 2);
         assert_eq!(snapshots[0].utilization_pct, Some(12.0));
         assert_eq!(snapshots[1].utilization_pct, Some(34.0));
+        assert!(snapshots[0].reset_at.is_some());
+        assert!(snapshots[1].reset_at.is_some());
+    }
+
+    #[test]
+    fn falls_back_to_active_limits_when_summary_window_is_missing() {
+        let snapshots = parse_usage(&json!({
+            "limits": [{
+                "kind": "session",
+                "group": "session",
+                "percent": 99,
+                "resets_at": "2026-07-12T19:00:00.021712+00:00",
+                "is_active": true
+            }]
+        }))
+        .unwrap();
+        assert_eq!(snapshots[0].utilization_pct, Some(99.0));
     }
 }
