@@ -11,11 +11,14 @@ Claude Code と Codex の使用量を常駐 HUD とダッシュボードで可�
 
 ## Data Sources
 
-- Claude Code official: `~/.claude/.credentials.json` の OAuth token で `https://api.anthropic.com/api/oauth/usage` を低頻度に取得
-- Claude Code local: `~/.claude/projects/**/*.jsonl`
+- Claude Code hook: Stop hook cacheが利用可能な場合に最優先で取得
+- Claude Code OAuth: credentials file / macOS Keychain の OAuth tokenで `https://api.anthropic.com/api/oauth/usage` を取得
+- Claude Code CLI: Claude CLIのPTY経由 `/usage` を公式使用率ソースとして取得
+- Claude Code Web: sessionKey Cookieで `claude.ai` usage APIを取得（任意、Keychain保存）
+- Claude Code local: `~/.claude/projects/**/*.jsonl` とClaude Desktop埋め込み `.claude/projects/**/*.jsonl`
 - Codex local: `~/.codex/sessions/**/*.jsonl`
 
-Claude の公式 API は 429 になりやすいため、初期実装ではローカル推定を常にフォールバックとして使います。
+Claudeの公式ソースは `hook → OAuth → CLI → Web` の順でフォールバックし、ローカル推定は常にtoken数補完として併走します。
 
 ## Development
 

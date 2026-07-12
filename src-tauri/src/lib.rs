@@ -1,6 +1,7 @@
 pub mod core;
 pub mod providers;
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,6 +12,7 @@ use core::scheduler::{Scheduler, SchedulerConfig};
 use providers::claude::ClaudeProvider;
 use providers::codex::CodexProvider;
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::RwLock;
 
@@ -29,7 +31,10 @@ struct ClaudeHookStatus {
     desktop_tokens_exists: bool,
     desktop_tokens_fresh: bool,
     desktop_tokens_path: Option<String>,
+    desktop_tokens_date: Option<String>,
+    desktop_tokens_modified_at: Option<String>,
     desktop_bridge_enabled: bool,
+    web_cookie_configured: bool,
 }
 
 impl AppState {
@@ -122,7 +127,22 @@ async fn get_claude_rate_limits_hook_status() -> Result<ClaudeHookStatus, String
         .transpose()
         .map_err(|err| err.to_string())?
         .unwrap_or(false);
+    let desktop_tokens_date = desktop_tokens_path
+        .as_deref()
+        .map(read_desktop_tokens_date)
+        .transpose()
+        .map_err(|err| err.to_string())?
+        .flatten();
+    let desktop_tokens_modified_at = desktop_tokens_path
+        .as_deref()
+        .map(modified_at_rfc3339)
+        .transpose()
+        .map_err(|err| err.to_string())?
+        .flatten();
     let desktop_bridge_enabled = is_claude_desktop_bridge_enabled().unwrap_or(false);
+    let web_cookie_configured = providers::claude_secrets::read_web_cookie()
+        .map(|cookie| cookie.is_some())
+        .unwrap_or(false);
 
     Ok(ClaudeHookStatus {
         installed,
@@ -132,8 +152,25 @@ async fn get_claude_rate_limits_hook_status() -> Result<ClaudeHookStatus, String
         desktop_tokens_exists,
         desktop_tokens_fresh,
         desktop_tokens_path: desktop_tokens_path.map(|path| path.display().to_string()),
+        desktop_tokens_date,
+        desktop_tokens_modified_at,
         desktop_bridge_enabled,
+        web_cookie_configured,
     })
+}
+
+#[tauri::command]
+async fn set_claude_web_cookie(cookie: String) -> Result<(), String> {
+    let cookie = cookie.trim();
+    if !cookie.contains("sessionKey=") || cookie.contains('\n') || cookie.contains('\r') {
+        return Err("Cookie must contain sessionKey and cannot contain newlines".to_string());
+    }
+    providers::claude_secrets::write_web_cookie(cookie).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn clear_claude_web_cookie() -> Result<(), String> {
+    providers::claude_secrets::clear_web_cookie().map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -165,6 +202,8 @@ pub fn run() {
             install_claude_rate_limits_hook,
             get_claude_rate_limits_hook_status,
             is_claude_rate_limits_hook_installed,
+            set_claude_web_cookie,
+            clear_claude_web_cookie,
             refresh_usage,
             show_dashboard
         ])
@@ -277,4 +316,27 @@ fn is_claude_desktop_bridge_enabled() -> anyhow::Result<bool> {
                 .unwrap_or(false)
         })
     }))
+}
+
+fn read_desktop_tokens_date(path: &Path) -> anyhow::Result<Option<String>> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let value: Value = serde_json::from_str(&content)?;
+    Ok(value
+        .pointer("/tokens-today/date")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned))
+}
+
+fn modified_at_rfc3339(path: &Path) -> anyhow::Result<Option<String>> {
+    let modified_at = match std::fs::metadata(path).and_then(|metadata| metadata.modified()) {
+        Ok(modified_at) => modified_at,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let modified_at: chrono::DateTime<chrono::Utc> = modified_at.into();
+    Ok(Some(modified_at.to_rfc3339()))
 }

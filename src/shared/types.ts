@@ -5,6 +5,7 @@ export type SnapshotSource =
   | "officialCli"
   | "sessionLog"
   | "hookCache"
+  | "web"
   | "localEstimate"
   | "unavailable";
 
@@ -45,6 +46,7 @@ export const sourceLabel: Record<SnapshotSource, string> = {
   officialCli: "CLI",
   sessionLog: "session",
   hookCache: "hook",
+  web: "Web",
   localEstimate: "est.",
   unavailable: "--"
 };

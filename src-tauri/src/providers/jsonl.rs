@@ -105,6 +105,7 @@ fn store_recent_events(key: String, events: Vec<TokenEvent>) {
 pub fn read_token_events_file(path: &Path) -> anyhow::Result<Vec<TokenEvent>> {
     let file = File::open(path)?;
     let mut events = Vec::new();
+    let mut assistant_events = HashMap::new();
     for line in BufReader::new(file).lines() {
         let line = line?;
         if line.trim().is_empty() || line.len() > MAX_EVENT_LINE_BYTES {
@@ -116,10 +117,29 @@ pub fn read_token_events_file(path: &Path) -> anyhow::Result<Vec<TokenEvent>> {
         };
         if let (Some(timestamp), Some(tokens)) = (extract_timestamp(&value), extract_tokens(&value))
         {
-            events.push(TokenEvent { timestamp, tokens });
+            let event = TokenEvent { timestamp, tokens };
+            if let Some(key) = assistant_usage_key(&value) {
+                assistant_events.insert(key, event);
+            } else {
+                events.push(event);
+            }
         }
     }
+    events.extend(assistant_events.into_values());
     Ok(events)
+}
+
+fn assistant_usage_key(value: &Value) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) != Some("assistant") {
+        return None;
+    }
+    let message_id = value.pointer("/message/id").and_then(Value::as_str)?;
+    let request_id = value
+        .get("requestId")
+        .or_else(|| value.pointer("/message/requestId"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Some(format!("{message_id}:{request_id}"))
 }
 
 pub fn extract_timestamp(value: &Value) -> Option<DateTime<Utc>> {
@@ -152,6 +172,12 @@ pub fn extract_tokens(value: &Value) -> Option<u64> {
     let direct_paths = [
         "/usage/input_tokens",
         "/usage/output_tokens",
+        "/usage/cache_creation_input_tokens",
+        "/usage/cache_read_input_tokens",
+        "/message/usage/input_tokens",
+        "/message/usage/output_tokens",
+        "/message/usage/cache_creation_input_tokens",
+        "/message/usage/cache_read_input_tokens",
         "/payload/info/last_token_usage/input_tokens",
         "/payload/info/last_token_usage/output_tokens",
         "/payload/info/last_token_usage/reasoning_output_tokens",
@@ -179,6 +205,8 @@ pub fn extract_tokens(value: &Value) -> Option<u64> {
     let cached = value
         .pointer("/usage/cache_creation_input_tokens")
         .or_else(|| value.pointer("/usage/cache_read_input_tokens"))
+        .or_else(|| value.pointer("/message/usage/cache_creation_input_tokens"))
+        .or_else(|| value.pointer("/message/usage/cache_read_input_tokens"))
         .or_else(|| value.pointer("/payload/info/last_token_usage/cached_input_tokens"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
@@ -190,6 +218,7 @@ pub fn extract_tokens(value: &Value) -> Option<u64> {
 mod tests {
     use serde_json::json;
 
+    use super::assistant_usage_key;
     use super::extract_tokens;
 
     #[test]
@@ -198,12 +227,14 @@ mod tests {
             "message": {
                 "usage": {
                     "input_tokens": 120,
+                    "cache_creation_input_tokens": 20,
+                    "cache_read_input_tokens": 10,
                     "output_tokens": 30
                 }
             }
         });
 
-        assert_eq!(extract_tokens(&value), Some(150));
+        assert_eq!(extract_tokens(&value), Some(180));
     }
 
     #[test]
@@ -223,5 +254,16 @@ mod tests {
         });
 
         assert_eq!(extract_tokens(&value), Some(200));
+    }
+
+    #[test]
+    fn deduplication_key_is_limited_to_assistant_messages() {
+        let value = json!({
+            "type": "assistant",
+            "requestId": "req-1",
+            "message": {"id": "msg-1"}
+        });
+        assert_eq!(assistant_usage_key(&value).as_deref(), Some("msg-1:req-1"));
+        assert!(assistant_usage_key(&json!({"type": "user"})).is_none());
     }
 }

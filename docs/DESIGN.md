@@ -49,11 +49,11 @@
 
 ### 採用しないもの(スコープ判断)
 
-- **ブラウザ Cookie 抽出 / Web スクレイピング**(claude.ai・chatgpt.com の Web API):
-  Full Disk Access や Keychain 権限が必要で、個人用途のプライバシー・複雑性コストが利益に見合わない。
-  CLI 系ソースで利用率とリセット時刻は取れる。将来の戦略追加余地としてだけ残す。
-- **PTY で `claude` / `codex` TUI を起動してパースする方式**: ANSI パースが脆く、
-  Claude は hook 方式(公式 stdin JSON)で足りる。
+- **ブラウザ Cookie 抽出 / Web スクレイピング**(claude.ai の Web API):
+  Claude CLIの公式 `/usage` が利用できない場合の最終フォールバックとして採用する。
+  Cookieは `sessionKey` のみ許可し、値はKeychainへ保存してアプリログ・settings JSONには出さない。
+- **PTY で `claude` TUI を起動して `/usage` をパースする方式**: CodexBarの実装知見を採用する。
+  専用作業ディレクトリ、短命プロセス、期限付き読み取り、ANSI除去、初回trust画面処理を必須とする。
 - **57 プロバイダ対応・多言語・WidgetKit・Sparkle 相当**: 対象は Claude Code + Codex の 2 つ。
   ただし §4.4 のレジストリ構造で第 3 プロバイダの追加コストは低く保つ。
 - **CLI コンパニオンツール**: 将来課題。`FetchStrategy` 層を UI 非依存にしておくことで道は残る。
@@ -107,7 +107,9 @@
 |---|---|---|---|---|
 | 1 | `claude.hook-cache` | LocalFile | Claude Code の Stop hook が書くキャッシュ JSON(`rate_limits.five_hour/seven_day`)を読む | 30 分 |
 | 2 | `claude.oauth-api` | Http | `GET https://api.anthropic.com/api/oauth/usage`(現行実装を戦略化。429 対策・低頻度は維持) | — |
-| 3 | `claude.local-estimate` | LocalFile | `~/.claude/projects/**/*.jsonl` トークン集計(現行 `local_windows`) | — |
+| 3 | `claude.cli-usage` | Subprocess | Claude CLIをPTY起動し`/usage`のCurrent session / Current weekを解析 | 20秒 |
+| 4 | `claude.web-usage` | Http | `claude.ai/api/organizations/{id}/usage`をsessionKey Cookieで取得 | 15秒 |
+| 常時併走 | `claude.local-estimate` | LocalFile | `~/.claude/projects`とClaude Desktop埋め込み`.claude/projects`のtoken集計 | — |
 
 ### Codex
 
@@ -414,8 +416,8 @@ Linux CI で `cargo test` / `cargo clippy` / `npx tsc --noEmit` が全パスす�
 | 戦略チェーンを trait + Vec で明示化 | CodexBar P1。ソース追加が「ファイル 1 個 + レジストリ 1 行」になり、プロバイダ本体の分岐が消える |
 | `should_fallback` を導入しない | ソース 3 つで打ち切り要件が存在しない。YAGNI。エラー型で一律フォールバック |
 | attempts を SQLite に保存しない | 揮発的デバッグ情報。履歴 DB の目的(グラフ)と無関係でスキーマを汚す |
-| ブラウザ Cookie / Web スクレイピング不採用 | 権限・保守コスト過大。CLI 系で利用率・リセット時刻は充足 |
-| PTY パース不採用 | ANSI パースは脆い。Claude は hook(公式 stdin JSON)、Codex は app-server(公式 RPC)で足りる |
+| Web Cookieを自動＋手動で許可 | CLIやOAuthが利用できない環境でも使用率を取得する。CookieはallowlistとKeychainで隔離 |
+| Claude CLI PTYを採用 | CodexBarが実運用している公式CLI `/usage` を使い、hook/cacheへの依存を解消する |
 | トレイをプライマリ、HUD をオプションに | CodexBar の実証済み UX。常時視認は menu bar が最も低コスト。HUD が好みのユーザー向けに設定で残す |
 | 短命 spawn(常駐 app-server にしない) | PLAN-cli-rate-limits §4 の判断を踏襲。sleep/wake 復旧不要、120s 周期に spawn ~1s は無視できる |
 | hook 自動インストール禁止 | 他ツールの設定ファイル(`~/.claude/settings.json`)を黙って書き換えない。CodexBar の permission transparency と同じ思想 |

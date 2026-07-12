@@ -22,6 +22,7 @@ const burnRates = document.querySelector<HTMLDivElement>("#burn-rates");
 const refresh = document.querySelector<HTMLButtonElement>("#refresh");
 const status = document.querySelector<HTMLParagraphElement>("#status");
 const hookSettings = document.querySelector<HTMLElement>("#hook-settings");
+const webCookieSettings = document.querySelector<HTMLElement>("#web-cookie-settings");
 
 interface ClaudeHookStatus {
   installed: boolean;
@@ -31,7 +32,10 @@ interface ClaudeHookStatus {
   desktopTokensExists: boolean;
   desktopTokensFresh: boolean;
   desktopTokensPath: string | null;
+  desktopTokensDate: string | null;
+  desktopTokensModifiedAt: string | null;
   desktopBridgeEnabled: boolean;
+  webCookieConfigured: boolean;
 }
 
 function percent(snapshot: UsageSnapshot): number {
@@ -81,6 +85,20 @@ function formatAge(value: string | null): string {
     return ` · ${Math.round(minutes / 60)}h old`;
   }
   return ` · ${minutes}m old`;
+}
+
+function formatDate(value: string | null): string {
+  return value ?? "unknown date";
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) {
+    return "unknown time";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function setStatus(message: string): void {
@@ -165,7 +183,9 @@ async function loadHookSettings(): Promise<void> {
       if (hookStatus.cacheExists) {
         text.textContent = "Claude Code hook waiting for fresh rate-limit data";
       } else if (hookStatus.desktopTokensExists) {
-        text.textContent = "Claude Desktop token cache is present but stale";
+        text.textContent = `Claude Desktop token cache stale (${formatDate(
+          hookStatus.desktopTokensDate,
+        )}, updated ${formatDateTime(hookStatus.desktopTokensModifiedAt)})`;
       } else if (hookStatus.desktopBridgeEnabled) {
         text.textContent = "Claude Desktop bridge detected. Waiting for token cache data.";
       } else {
@@ -211,6 +231,57 @@ async function loadHookSettings(): Promise<void> {
   }
 }
 
+async function loadWebCookieSettings(): Promise<void> {
+  if (!webCookieSettings || isBrowserPreview()) {
+    webCookieSettings?.replaceChildren();
+    return;
+  }
+  try {
+    const hookStatus = await invokeCommand<ClaudeHookStatus>("get_claude_rate_limits_hook_status");
+    webCookieSettings.replaceChildren();
+    const input = document.createElement("input");
+    input.type = "password";
+    input.placeholder = "Claude sessionKey cookie";
+    input.autocomplete = "off";
+    input.className = "cookie-input";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "secondary-button";
+    save.textContent = hookStatus.webCookieConfigured ? "Replace Web cookie" : "Set Web cookie";
+    save.addEventListener("click", async () => {
+      if (!input.value.trim()) return;
+      save.disabled = true;
+      try {
+        await invokeCommand("set_claude_web_cookie", { cookie: input.value.trim() });
+        input.value = "";
+        await loadWebCookieSettings();
+      } catch {
+        save.disabled = false;
+        save.textContent = "Web cookie failed";
+      }
+    });
+    webCookieSettings.append(save);
+    if (hookStatus.webCookieConfigured) {
+      const clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "secondary-button";
+      clear.textContent = "Clear Web cookie";
+      clear.addEventListener("click", async () => {
+        await invokeCommand("clear_claude_web_cookie");
+        await loadWebCookieSettings();
+      });
+      webCookieSettings.append(clear);
+    }
+    const text = document.createElement("span");
+    text.textContent = hookStatus.webCookieConfigured
+      ? "Web fallback cookie stored in macOS Keychain"
+      : "Optional Claude Web fallback; cookie value stays in macOS Keychain";
+    webCookieSettings.append(input, text);
+  } catch {
+    webCookieSettings.replaceChildren();
+  }
+}
+
 refresh?.addEventListener("click", async () => {
   setStatus("Refreshing live usage...");
   try {
@@ -224,3 +295,4 @@ refresh?.addEventListener("click", async () => {
 void listenSnapshot(render).catch(() => undefined);
 void load();
 void loadHookSettings();
+void loadWebCookieSettings();

@@ -111,6 +111,7 @@ fn format_source(source: SnapshotSource) -> &'static str {
         SnapshotSource::OfficialCli => "officialCli",
         SnapshotSource::SessionLog => "sessionLog",
         SnapshotSource::HookCache => "hookCache",
+        SnapshotSource::Web => "web",
         SnapshotSource::LocalEstimate => "localEstimate",
         SnapshotSource::Unavailable => "unavailable",
     }

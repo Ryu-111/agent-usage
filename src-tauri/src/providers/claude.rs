@@ -1,13 +1,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::core::model::{Agent, SnapshotSource, TokenEvent, UsageSnapshot, UsageWindow};
+use crate::providers::claude_cli::ClaudeCliUsage;
 use crate::providers::claude_hook::{cache_file_path, read_hook_cache, HOOK_CACHE_MAX_AGE};
 use crate::providers::creds::read_claude_credentials;
 use crate::providers::jsonl::read_recent_token_events;
@@ -19,21 +20,20 @@ static OFFICIAL_USAGE_STATE: OnceLock<Mutex<OfficialUsageState>> = OnceLock::new
 pub struct ClaudeProvider {
     projects_pattern: Option<String>,
     desktop_patterns: Vec<String>,
-    desktop_tokens_path: Option<PathBuf>,
     hook_cache_path: Option<std::path::PathBuf>,
     client: reqwest::Client,
 }
 
 impl Default for ClaudeProvider {
     fn default() -> Self {
-        let projects_pattern =
-            dirs::home_dir().map(|home| format!("{}/.claude/projects/**/*.jsonl", home.display()));
         Self {
-            projects_pattern,
+            projects_pattern: None,
             desktop_patterns: default_desktop_patterns(),
-            desktop_tokens_path: default_desktop_tokens_path(),
             hook_cache_path: cache_file_path(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .expect("build Claude HTTP client"),
         }
     }
 }
@@ -43,9 +43,11 @@ impl ClaudeProvider {
         Self {
             projects_pattern: Some(pattern),
             desktop_patterns: Vec::new(),
-            desktop_tokens_path: None,
             hook_cache_path: cache_file_path(),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .expect("build Claude HTTP client"),
         }
     }
 
@@ -66,6 +68,16 @@ impl ClaudeProvider {
             return Ok(merge_rate_limits_with_local(official, local));
         }
 
+        if let Ok(Some(cli)) = self.cli_snapshot().await {
+            let local = self.local_snapshot()?;
+            return Ok(merge_rate_limits_with_local(cli, local));
+        }
+
+        if let Ok(web) = crate::providers::claude_web::fetch_usage().await {
+            let local = self.local_snapshot()?;
+            return Ok(merge_rate_limits_with_local(web, local));
+        }
+
         self.local_snapshot()
     }
 
@@ -78,12 +90,7 @@ impl ClaudeProvider {
             events.extend(read_recent_token_events(pattern, Duration::days(8))?);
         }
         events.sort_by_key(|event| event.timestamp);
-        let mut windows = local_windows(Agent::ClaudeCode, &events);
-        if let Some(path) = &self.desktop_tokens_path {
-            if let Some(tokens) = read_desktop_tokens_today(path)? {
-                merge_desktop_tokens_into_weekly(&mut windows, tokens);
-            }
-        }
+        let windows = local_windows(Agent::ClaudeCode, &events);
         Ok(windows)
     }
 
@@ -133,20 +140,68 @@ impl ClaudeProvider {
         state.register_success(snapshots.clone(), now);
         Ok(Some(snapshots))
     }
+
+    async fn cli_snapshot(&self) -> anyhow::Result<Option<Vec<UsageSnapshot>>> {
+        let Some(binary) = find_claude_binary() else {
+            return Ok(None);
+        };
+        let usage = crate::providers::claude_cli::fetch_usage(
+            Some(binary),
+            std::time::Duration::from_secs(20),
+        )
+        .await?;
+        Ok(Some(cli_usage_snapshots(usage)))
+    }
+}
+
+fn cli_usage_snapshots(usage: ClaudeCliUsage) -> Vec<UsageSnapshot> {
+    let observed_at = Some(Utc::now());
+    vec![
+        UsageSnapshot {
+            agent: Agent::ClaudeCode,
+            window: UsageWindow::FiveHour,
+            utilization_pct: usage.five_hour_used_percent,
+            used_tokens: None,
+            burn_rate_tokens_per_min: None,
+            reset_at: None,
+            limit_reached_at: None,
+            observed_at,
+            source: SnapshotSource::OfficialCli,
+        },
+        UsageSnapshot {
+            agent: Agent::ClaudeCode,
+            window: UsageWindow::Weekly,
+            utilization_pct: usage.weekly_used_percent,
+            used_tokens: None,
+            burn_rate_tokens_per_min: None,
+            reset_at: None,
+            limit_reached_at: None,
+            observed_at,
+            source: SnapshotSource::OfficialCli,
+        },
+    ]
+    .into_iter()
+    .filter(|snapshot| snapshot.utilization_pct.is_some())
+    .collect()
+}
+
+fn find_claude_binary() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("CLAUDE_BIN") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|directory| directory.join("claude"))
+        .find(|candidate| candidate.is_file())
 }
 
 fn default_desktop_patterns() -> Vec<String> {
-    let Some(home) = dirs::home_dir() else {
-        return Vec::new();
-    };
-    let base = home.join("Library/Application Support/Claude");
-    vec![
-        format!("{}/claude-code-sessions/**/local_*.json", base.display()),
-        format!(
-            "{}/local-agent-mode-sessions/**/local_*.json",
-            base.display()
-        ),
-    ]
+    dirs::home_dir()
+        .map(|home| crate::providers::claude_desktop::project_patterns(&home))
+        .unwrap_or_default()
 }
 
 pub fn default_desktop_tokens_path() -> Option<PathBuf> {
@@ -175,24 +230,11 @@ pub fn read_desktop_tokens_today(path: &Path) -> anyhow::Result<Option<u64>> {
     let Ok(date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
         return Ok(None);
     };
-    if date != Utc::now().date_naive() {
+    if date != Local::now().date_naive() {
         return Ok(None);
     }
 
     Ok(Some(tokens))
-}
-
-fn merge_desktop_tokens_into_weekly(windows: &mut [UsageSnapshot], tokens: u64) {
-    let Some(weekly) = windows
-        .iter_mut()
-        .find(|snapshot| snapshot.window == UsageWindow::Weekly)
-    else {
-        return;
-    };
-    weekly.used_tokens = Some(weekly.used_tokens.unwrap_or(0).saturating_add(tokens));
-    if weekly.source == SnapshotSource::Unavailable {
-        weekly.source = SnapshotSource::LocalEstimate;
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -478,7 +520,7 @@ mod tests {
             &path,
             format!(
                 r#"{{"tokens-today":{{"date":"{}","tokens":51412}}}}"#,
-                chrono::Utc::now().date_naive()
+                chrono::Local::now().date_naive()
             ),
         )
         .unwrap();

@@ -22,6 +22,7 @@ pub enum SnapshotSource {
     OfficialCli,
     SessionLog,
     HookCache,
+    Web,
     LocalEstimate,
     Unavailable,
 }
