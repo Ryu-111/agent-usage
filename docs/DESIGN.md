@@ -39,13 +39,25 @@
 | # | CodexBar の原則 | agent-usage への適用 |
 |---|---|---|
 | P1 | `ProviderFetchStrategy` プロトコル(id / kind / isAvailable / fetch / shouldFallback)による戦略チェーン | Rust trait `FetchStrategy` + 順序付きチェーン実行器(§4) |
-| P2 | `ProviderFetchOutcome` = attempts + errors をデバッグ UI / CLI `--verbose` に出す | `FetchAttempt` ログを snapshot に同梱し、ダッシュボードに表示(§5, §8) |
+| P2 | `ProviderFetchOutcome` = attempts + errors をデバッグ UI / CLI `--verbose` に出す | `FetchAttempt` ログを snapshot に同梱し、ダッシュボードに表示(§5, §10) |
 | P3 | "prefer cached data over flapping; show clear errors when stale" | last-good キャッシュ + 鮮度(`observed_at`)表示。失敗時は古い値を「stale」マーク付きで出し続ける(§6) |
 | P4 | "timeout-bounded; no unbounded waits on network/PTY" | 全戦略に per-strategy タイムアウト必須(§4) |
 | P5 | `ProviderDescriptor` による能力宣言と網羅的レジストリ | 小規模版: `ProviderDescriptor` 構造体 + 静的レジストリ。将来の第3プロバイダ(Gemini CLI 等)追加を1ファイルで完結させる(§4.4) |
 | P6 | 更新間隔・ソース選択がユーザー設定可能 | `settings.json`(アプリデータディレクトリ)+ 設定 UI 最小版(§7) |
-| P7 | メニューバー常駐 + 使用率アイコン | Tauri tray icon にタイトルテキストで利用率を表示。HUD はオプションに格下げ(§8) |
+| P7 | メニューバー常駐 + 使用率アイコン | Tauri tray icon にタイトルテキストで利用率を表示。HUD はオプションに格下げ(§10) |
 | P8 | 失敗した実行環境要因の隔離(quarantine 検出で 30 分スキップ等) | 戦略単位のクールダウン: 起動失敗した戦略は一定時間スキップ(§4.3) |
+
+### RunCatNeo から採用する設計原則(追補)
+
+[runcat-dev/RunCatNeo](https://github.com/runcat-dev/RunCatNeo)(macOS メニューバー常駐の
+システムモニタ)もレビューした。特に **Custom Metrics**(ローカル JSON を fs イベントで監視して
+カード表示する機構。公式サンプルに Claude Code / Codex 連携が存在する)から以下を採用する。
+
+| # | RunCat の原則 | agent-usage への適用 |
+|---|---|---|
+| P9 | 対象ファイルをポーリングせず fs イベントで監視し、変更を即時反映 | `notify` による watcher。ターン終了→数秒で表示更新(§8) |
+| P10 | 文書化されたローカル JSON 契約で他ツールと疎結合連携(producer 側整形・atomic write・失敗時は failed 表示で自動復旧) | RunCat 互換 Custom Metrics JSON のエクスポート(§9) |
+| P11 | メトリクス駆動アニメーション(負荷→猫の走る速度) | 任意フェーズ: burn rate でトレイアイコンをアニメ(§11 Phase 6) |
 
 ### 採用しないもの(スコープ判断)
 
@@ -81,6 +93,8 @@
 │   (jsonl.rs / creds.rs は共有ユーティリティ)                                    │
 │                                                                              │
 │  core/settings.rs — settings.json の読み書き + "settings://changed" emit      │
+│  core/watcher.rs  — fs イベント監視(notify)→ デバウンス付き即時 refresh       │
+│  core/export.rs   — RunCat 互換 Custom Metrics JSON の書き出し                │
 │  tray.rs          — トレイアイコン(タイトル=最重要窓の %、メニュー)              │
 └──────────────────────────────────────────────────────────────────────────────┘
                        │ events / #[tauri::command]
@@ -126,6 +140,11 @@
   `identity: Option<String>` を将来追加できる余地だけ残す(フィールド追加のみで済む設計に)。
 - `~/.codex/archived_sessions/*.jsonl` もローカル集計の走査対象に加える(CodexBar が対象にしている。
   アーカイブ後もその日の使用量に含まれるため)。
+- **検討事項(現時点ではチェーンに入れない)**: RunCatNeo の Codex サンプルは
+  `~/.codex/hooks.json` の **Stop hook** でターン毎に使用量 JSON を書かせている。
+  Codex にも hook 機構が存在するため、app-server RPC が使えない環境向けの受動経路
+  (Claude と同じ hook キャッシュ方式)になり得る。実機で hooks.json の仕様
+  (発火タイミング・stdin ペイロード)を確認してから採否を決めること。
 
 ### マージ規則(現行踏襲 + 拡張)
 
@@ -288,8 +307,11 @@ pub struct AppState {
 ```jsonc
 {
   "version": 1,
-  "refreshIntervalSecs": 120,        // 60–900 にクランプ。env AGENT_USAGE_INTERVAL_SECS が最優先
+  "refreshIntervalSecs": 300,        // 60–900 にクランプ。env AGENT_USAGE_INTERVAL_SECS が最優先
+                                     // watcher(§8)有効時は 300 で十分。無効時は 120 推奨
   "hudEnabled": true,                // P7: HUD をオプション化
+  "fsWatchEnabled": true,            // P9: fs イベント監視(§8)。env AGENT_USAGE_WATCH=0 が最優先
+  "exportRuncatMetrics": false,      // P10: RunCat 互換 JSON 書き出し(§9)
   "providers": {
     "claudeCode": { "enabled": true, "disabledStrategies": [] },
     "codex":      { "enabled": true, "disabledStrategies": [] }
@@ -306,9 +328,63 @@ pub struct AppState {
 
 ---
 
-## 8. UI 変更
+## 8. イベント駆動更新(P9)— `src-tauri/src/core/watcher.rs`(新規)
 
-### 8.1 トレイ常駐(P7)— `src-tauri/src/tray.rs`(新規)
+RunCat の Custom Metrics は対象 JSON をポーリングせず fs イベントで監視し、変更を即時反映する。
+同じ方式を取り込み、「ターン終了 → 数秒以内に表示更新」を実現する。
+
+- `notify` クレート(macOS では FSEvents バックエンド)で以下を監視する:
+  - Claude hook キャッシュ: `<data_dir>/agent-usage/claude_rate_limits.json`
+  - `~/.claude/projects/`(再帰)
+  - `~/.codex/sessions/`(再帰)
+- イベント受信 → **2 秒デバウンス**(タイマーリセット方式。連続書き込みを 1 回にまとめる)→
+  通常の collect を 1 回実行して emit。
+- **キャッシュとの整合**: watcher 起点の refresh では、変更が検知されたパターンの
+  `RECENT_EVENTS_CACHE`(jsonl.rs、10 分 TTL)エントリを先に無効化する。
+  さもないとイベント駆動にした意味がなくなる。
+- **スケジューラは廃止しない**。低頻度フォールバック(watcher 有効時は既定 300s)として維持する。
+  ファイル変更を伴わない状態変化(リセット時刻の経過による % 変化)と watcher 障害を拾う安全網。
+- watcher の初期化失敗はログに記録するのみで、アプリはスケジューラのみで動作継続する。
+- 無効化手段: settings の `fsWatchEnabled`(§7)、env `AGENT_USAGE_WATCH=0`(最優先)。
+
+## 9. エクスポート(P10)— RunCat 互換 Custom Metrics JSON — `src-tauri/src/core/export.rs`(新規)
+
+RunCatNeo の Custom Metrics スキーマ(`docs/CustomMetricsSchema.md`)に準拠した JSON を書き出す。
+RunCat Neo ユーザーはファイルをソース登録するだけで、メニューバーの Metrics Bar に使用率が出る
+(本アプリのトレイ §10.1 の補完。RunCat 専用ではなく xbar / SketchyBar 等からも読める汎用契約)。
+
+- 設定 `exportRuncatMetrics: true` のとき、snapshot 更新毎に以下を書き出す
+  (RunCat は 1 ファイル = 1 カードのため 2 ファイル):
+  - `<data_dir>/agent-usage/export/claude-code.json`
+  - `<data_dir>/agent-usage/export/codex.json`
+  - `<data_dir>/agent-usage/export/snapshot.json`(生の `AppSnapshot`。他ツール向け)
+- 出力例(スキーマ: `title` 必須 / `symbol` / `metricsBarValue` / `metrics[]` / `lastUpdatedDate` 必須):
+
+```jsonc
+{
+  "title": "Claude Code",
+  "symbol": "asterisk",
+  "metricsBarValue": "42%",            // 最逼迫窓の %。localEstimate のみなら "~42%" 形式
+  "metrics": [
+    { "title": "5h",   "formattedValue": "42% · resets 14:05", "normalizedValue": 0.42 },
+    { "title": "Week", "formattedValue": "71% · resets Mon",   "normalizedValue": 0.71 },
+    { "title": "Burn", "formattedValue": "1.2k tok/min" }
+  ],
+  "lastUpdatedDate": "2026-07-15T04:50:40Z"   // observed_at を ISO 8601 で
+}
+```
+
+- 契約規律(RunCat の原則をそのまま守る):
+  - **整形は producer(本アプリ)側の責務**。単位・% 記号・丸めを含めた表示文字列を出す。
+  - `normalizedValue` は 0–1 にクランプ。% が取れない窓(localEstimate のみ)では省略し、
+    `formattedValue` にトークン量を出す。
+  - **atomic write**(tmp + rename)。部分読みを発生させない。1MB 未満を保つ。
+- README に RunCat 側の登録手順を記載する:
+  RunCat Neo → Settings → Custom Metrics → Add JSON Source → 上記 2 ファイルを指定。
+
+## 10. UI 変更
+
+### 10.1 トレイ常駐(P7)— `src-tauri/src/tray.rs`(新規)
 
 CodexBar の中核 UX の移植。Tauri v2 の `tray-icon` 機能を使う。
 
@@ -321,7 +397,7 @@ CodexBar の中核 UX の移植。Tauri v2 の `tray-icon` 機能を使う。
 - `tauri.conf.json`: `trayIcon` 追加。`activationPolicy: accessory` は維持。
   HUD ウィンドウは `hudEnabled` 設定に従い生成/破棄。
 
-### 8.2 ダッシュボード
+### 10.2 ダッシュボード
 
 - ソースバッジ: `sourceLabel`(CLI / hook / API / session / est. / —)+ 鮮度(§6 の規則)。
 - **デバッグパネル(P2)**: 折りたたみ式「Last fetch attempts」。`AppSnapshot.attempts` を
@@ -330,7 +406,7 @@ CodexBar の中核 UX の移植。Tauri v2 の `tray-icon` 機能を使う。
   CodexBar の debug UI / `--verbose` に相当し、「なぜこのソースなのか」に常に答えられるようにする。
 - 設定セクション(§7)。
 
-### 8.3 TS 型 — `src/shared/types.ts`
+### 10.3 TS 型 — `src/shared/types.ts`
 
 ```ts
 export type SnapshotSource =
@@ -354,7 +430,7 @@ export interface Settings      { /* §7 と同形 */ }
 
 ---
 
-## 9. 実装フェーズ(Codex への指示)
+## 11. 実装フェーズ(実装エージェントへの指示)
 
 各フェーズは独立にコンパイル・テスト可能。**フェーズ順に PR を分けること。**
 
@@ -381,16 +457,25 @@ export interface Settings      { /* §7 と同形 */ }
 戦略 `claude.hook-cache` として登録。インストールはダッシュボードのボタンから明示的に
 (自動インストール禁止・ユーザー同意必須、同プランのとおり)。
 
-### Phase 4 — 設定 + スケジューラ
+### Phase 4 — 設定 + スケジューラ + watcher
 `core/settings.rs`、`update_settings` コマンド、scheduler の動的間隔、
-既定間隔 300s → 120s、戦略の enable/disable を engine に配線。
+戦略の enable/disable を engine に配線。`core/watcher.rs`(§8): notify 監視・デバウンス・
+キャッシュ無効化・`fsWatchEnabled` / `AGENT_USAGE_WATCH` の配線。
+既定間隔は watcher 有効時 300s / 無効時 120s。
 
-### Phase 5 — トレイ + UI 仕上げ
+### Phase 5 — トレイ + UI 仕上げ + エクスポート
 `tray.rs`、HUD のオプション化、ダッシュボードのソースバッジ/鮮度/attempts パネル/設定セクション。
+`core/export.rs`(§9): RunCat 互換 JSON + `snapshot.json` の書き出し、`exportRuncatMetrics` 設定、
+README への RunCat 登録手順追記。
+
+### Phase 6(任意)— トレイアニメーション(P11)
+burn rate / 利用率に応じてトレイアイコンをフレームアニメーションさせる(RunCat 本体の UX)。
+必須要件: フレームレート上限(最大 5fps)・アニメ off 設定・アイドル時(burn rate 0)は静止。
+省電力を優先し、実装コストが高ければ見送ってよい。
 
 ---
 
-## 10. テスト計画(差分)
+## 12. テスト計画(差分)
 
 `PLAN-cli-rate-limits.md` §11 のテストに加えて:
 
@@ -402,6 +487,13 @@ export interface Settings      { /* §7 と同形 */ }
 - **settings**: 不正 JSON → 既定値へフォールバック、クランプ、`disabledStrategies` が
   `Skipped("disabledInSettings")` になること。
 - **last-good**: 全滅ティックで `latest` の前回値が保持されること。
+- **watcher**: tempdir を監視対象にし、(a) ファイル書き込みで refresh コールバックが発火する、
+  (b) 2 秒以内の連続 5 回書き込みが 1 回の refresh にまとまる(デバウンス)、
+  (c) 監視対象パスが存在しなくても初期化がエラーにならない、を検証。
+- **export**: (a) 必須フィールド(`title` / `metrics` / `lastUpdatedDate`)が常に存在、
+  (b) `normalizedValue` が 0–1 にクランプされる、(c) tmp+rename の atomic write
+  (書き込み途中のファイル名が最終名と異なる)、(d) localEstimate のみの場合は
+  `normalizedValue` 省略で `formattedValue` にトークン量が出る、を検証。
 
 いずれも実 `~/.claude` / `~/.codex` に依存しない(tempdir + フィクスチャ + コマンド差し替え)。
 Linux CI で `cargo test` / `cargo clippy` / `npx tsc --noEmit` が全パスすること。
@@ -409,7 +501,7 @@ Linux CI で `cargo test` / `cargo clippy` / `npx tsc --noEmit` が全パスす�
 
 ---
 
-## 11. 決定記録(Design Decisions)
+## 13. 決定記録(Design Decisions)
 
 | 決定 | 理由 |
 |---|---|
@@ -421,3 +513,7 @@ Linux CI で `cargo test` / `cargo clippy` / `npx tsc --noEmit` が全パスす�
 | トレイをプライマリ、HUD をオプションに | CodexBar の実証済み UX。常時視認は menu bar が最も低コスト。HUD が好みのユーザー向けに設定で残す |
 | 短命 spawn(常駐 app-server にしない) | PLAN-cli-rate-limits §4 の判断を踏襲。sleep/wake 復旧不要、120s 周期に spawn ~1s は無視できる |
 | hook 自動インストール禁止 | 他ツールの設定ファイル(`~/.claude/settings.json`)を黙って書き換えない。CodexBar の permission transparency と同じ思想 |
+| fs イベント監視を追加し、ポーリングをフォールバックに格下げ | RunCat の実証済みパターン。即時性(ターン終了→数秒)と省電力を両立。リセット時刻経過や watcher 障害はスケジューラが安全網として拾う |
+| エクスポートは RunCat 互換スキーマを採用 | 独自形式を発明せず既存エコシステム(RunCat Neo の Custom Metrics)にそのまま乗れる。producer-side formatting・atomic write・failed 表示からの自動復旧という契約が明文化済みで流用できる |
+| Claude の statusLine 連携は不採用 | `statusLine.command` は 1 つしか登録できず、既存ユーザー設定と競合する(RunCatNeo のサンプルはこの方式)。Stop hook で同じ `rate_limits` が取れる。hook が発火しない環境が実機診断で判明した場合のみ、既存コマンドをパススルーする wrapper 方式を再検討 |
+| LUCA アーキテクチャ自体は不採用 | SwiftUI 固有の構成。本アプリは「collect → 単一 snapshot → emit → UI が購読」の単方向フローで同等の原則を既に満たしている |
