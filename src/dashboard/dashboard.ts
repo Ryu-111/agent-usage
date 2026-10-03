@@ -16,6 +16,7 @@ import {
   refreshLiveSnapshot,
   unavailableSnapshot
 } from "../shared/tauri";
+import { formatDateTimeJst } from "../shared/time";
 
 const rings = document.querySelector<HTMLDivElement>("#rings");
 const burnRates = document.querySelector<HTMLDivElement>("#burn-rates");
@@ -95,10 +96,7 @@ function formatDateTime(value: string | null): string {
   if (!value) {
     return "unknown time";
   }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  return formatDateTimeJst(value);
 }
 
 function setStatus(message: string): void {
