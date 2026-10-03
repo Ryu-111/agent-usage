@@ -9,6 +9,7 @@ import {
   previewSnapshot,
   unavailableSnapshot
 } from "../shared/tauri";
+import { formatClockJst } from "../shared/time";
 
 const hud = document.querySelector<HTMLElement>("#hud");
 const rows = document.querySelector<HTMLDivElement>("#rows");
@@ -36,7 +37,7 @@ function formatReset(value: string | null): string {
   }
   const resetAt = new Date(value);
   const minutes = Math.max(0, Math.round((resetAt.getTime() - Date.now()) / 60_000));
-  const clock = resetAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const clock = formatClockJst(resetAt);
   if (minutes >= 1440) {
     return `Reset ${clock} · ${Math.round(minutes / 1440)}d`;
   }
@@ -57,10 +58,7 @@ function render(snapshot: AppSnapshot): void {
   if (!rows || !updated) {
     return;
   }
-  updated.textContent = new Date(snapshot.capturedAt).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  updated.textContent = `${formatClockJst(snapshot.capturedAt)} JST`;
 
   const usageByWindow = snapshot.agents.flatMap((agent) =>
     agent.windows.map((usage) => ({ ...usage, agent: agent.agent }))
