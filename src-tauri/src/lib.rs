@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use core::history::HistoryStore;
-use core::model::{AgentUsage, AppSnapshot};
+use core::model::{Agent, AgentUsage, AppSnapshot, SnapshotSource, UsageSnapshot, UsageWindow};
 use core::scheduler::{Scheduler, SchedulerConfig};
 use providers::claude::ClaudeProvider;
 use providers::codex::CodexProvider;
@@ -57,13 +57,14 @@ async fn refresh_usage<R: Runtime>(
     app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
 ) -> Result<AppSnapshot, String> {
-    if let Some(snapshot) = state.latest.read().await.clone() {
+    let previous = state.latest.read().await.clone();
+    if let Some(snapshot) = &previous {
         if chrono::Utc::now() - snapshot.captured_at < chrono::Duration::seconds(120) {
-            return Ok(snapshot);
+            return Ok(snapshot.clone());
         }
     }
 
-    let snapshot = collect_snapshot().await.map_err(|err| err.to_string())?;
+    let snapshot = collect_snapshot(previous.as_ref()).await;
     *state.latest.write().await = Some(snapshot.clone());
     let _ = app.emit("usage://snapshot", &snapshot);
     Ok(snapshot)
@@ -236,22 +237,17 @@ async fn bootstrap_scheduler<R: Runtime>(app: AppHandle<R>, state: AppState) -> 
             let state = state.clone();
             let store = store.clone();
             async move {
-                let snapshot = collect_snapshot().await?;
-                let should_publish = {
-                    let mut latest = state.latest.write().await;
-                    if latest
-                        .as_ref()
-                        .is_some_and(|previous| snapshots_equivalent(previous, &snapshot))
-                    {
-                        false
-                    } else {
-                        *latest = Some(snapshot.clone());
-                        true
-                    }
-                };
-                if should_publish {
+                let previous = state.latest.read().await.clone();
+                let snapshot = collect_snapshot(previous.as_ref()).await;
+                // Always publish so the UI shows when usage was last checked;
+                // only write history rows when the usage itself changed.
+                let changed = !previous
+                    .as_ref()
+                    .is_some_and(|previous| snapshots_equivalent(previous, &snapshot));
+                *state.latest.write().await = Some(snapshot.clone());
+                let _ = app.emit("usage://snapshot", &snapshot);
+                if changed {
                     store.insert_app_snapshot(&snapshot)?;
-                    let _ = app.emit("usage://snapshot", &snapshot);
                 }
                 Ok(())
             }
@@ -261,22 +257,53 @@ async fn bootstrap_scheduler<R: Runtime>(app: AppHandle<R>, state: AppState) -> 
     Ok(())
 }
 
-async fn collect_snapshot() -> anyhow::Result<AppSnapshot> {
-    let claude = ClaudeProvider::default().snapshot().await?;
-    let codex = CodexProvider::default().snapshot().await?;
-    Ok(AppSnapshot {
+async fn collect_snapshot(previous: Option<&AppSnapshot>) -> AppSnapshot {
+    let claude = ClaudeProvider::default().snapshot().await;
+    let codex = CodexProvider::default().snapshot().await;
+    AppSnapshot {
         captured_at: chrono::Utc::now(),
         agents: vec![
-            AgentUsage {
-                agent: core::model::Agent::ClaudeCode,
-                windows: claude,
-            },
-            AgentUsage {
-                agent: core::model::Agent::Codex,
-                windows: codex,
-            },
+            agent_usage_or_fallback(Agent::ClaudeCode, claude, previous),
+            agent_usage_or_fallback(Agent::Codex, codex, previous),
         ],
-    })
+    }
+}
+
+/// One provider failing must not drop the other agent's data, so a failed
+/// provider keeps its previous windows (or reports unavailable on first run).
+fn agent_usage_or_fallback(
+    agent: Agent,
+    result: anyhow::Result<Vec<UsageSnapshot>>,
+    previous: Option<&AppSnapshot>,
+) -> AgentUsage {
+    let windows = match result {
+        Ok(windows) => windows,
+        Err(err) => {
+            eprintln!("{agent:?} usage refresh failed: {err:#}");
+            previous
+                .and_then(|snapshot| snapshot.agents.iter().find(|usage| usage.agent == agent))
+                .map(|usage| usage.windows.clone())
+                .unwrap_or_else(|| unavailable_windows(agent))
+        }
+    };
+    AgentUsage { agent, windows }
+}
+
+fn unavailable_windows(agent: Agent) -> Vec<UsageSnapshot> {
+    [UsageWindow::FiveHour, UsageWindow::Weekly]
+        .into_iter()
+        .map(|window| UsageSnapshot {
+            agent,
+            window,
+            utilization_pct: None,
+            used_tokens: None,
+            burn_rate_tokens_per_min: None,
+            reset_at: None,
+            limit_reached_at: None,
+            observed_at: None,
+            source: SnapshotSource::Unavailable,
+        })
+        .collect()
 }
 
 fn snapshots_equivalent(left: &AppSnapshot, right: &AppSnapshot) -> bool {
@@ -339,4 +366,51 @@ fn modified_at_rfc3339(path: &Path) -> anyhow::Result<Option<String>> {
     };
     let modified_at: chrono::DateTime<chrono::Utc> = modified_at.into();
     Ok(Some(modified_at.to_rfc3339()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot_with(agent: Agent, source: SnapshotSource) -> AppSnapshot {
+        let mut windows = unavailable_windows(agent);
+        for window in &mut windows {
+            window.source = source;
+            window.used_tokens = Some(42);
+        }
+        AppSnapshot {
+            captured_at: chrono::Utc::now(),
+            agents: vec![AgentUsage { agent, windows }],
+        }
+    }
+
+    #[test]
+    fn failed_provider_keeps_previous_windows() {
+        let previous = snapshot_with(Agent::ClaudeCode, SnapshotSource::Official);
+        let usage = agent_usage_or_fallback(
+            Agent::ClaudeCode,
+            Err(anyhow::anyhow!("boom")),
+            Some(&previous),
+        );
+        assert_eq!(usage.windows, previous.agents[0].windows);
+    }
+
+    #[test]
+    fn failed_provider_without_history_is_unavailable() {
+        let usage = agent_usage_or_fallback(Agent::Codex, Err(anyhow::anyhow!("boom")), None);
+        assert_eq!(usage.windows.len(), 2);
+        assert!(usage
+            .windows
+            .iter()
+            .all(|window| window.source == SnapshotSource::Unavailable
+                && window.agent == Agent::Codex));
+    }
+
+    #[test]
+    fn successful_provider_uses_fresh_windows() {
+        let previous = snapshot_with(Agent::Codex, SnapshotSource::Official);
+        let fresh = unavailable_windows(Agent::Codex);
+        let usage = agent_usage_or_fallback(Agent::Codex, Ok(fresh.clone()), Some(&previous));
+        assert_eq!(usage.windows, fresh);
+    }
 }

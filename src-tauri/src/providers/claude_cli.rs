@@ -42,62 +42,65 @@ fn fetch_usage_blocking(binary: &PathBuf, timeout: Duration) -> anyhow::Result<C
         .context("spawn Claude CLI")?;
     drop(pair.slave);
 
-    let mut writer = pair
-        .master
-        .take_writer()
-        .context("open Claude CLI PTY writer")?;
-    let reader = pair
-        .master
-        .try_clone_reader()
-        .context("open Claude CLI PTY reader")?;
-    let (sender, receiver) = mpsc::channel::<Vec<u8>>();
-    std::thread::spawn(move || read_output(reader, sender));
+    // Run the interaction in a closure so every exit path, including PTY
+    // setup and write errors, kills the spawned CLI instead of leaking it.
+    let result = (|| -> anyhow::Result<ClaudeCliUsage> {
+        let mut writer = pair
+            .master
+            .take_writer()
+            .context("open Claude CLI PTY writer")?;
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .context("open Claude CLI PTY reader")?;
+        let (sender, receiver) = mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || read_output(reader, sender));
 
-    let mut output = String::new();
-    let started = Instant::now();
-    let mut sent_usage = false;
-    let mut sent_trust = false;
+        let mut output = String::new();
+        let started = Instant::now();
+        let mut sent_usage = false;
+        let mut sent_trust = false;
 
-    while started.elapsed() < timeout {
-        while let Ok(chunk) = receiver.try_recv() {
-            output.push_str(&String::from_utf8_lossy(&chunk));
-        }
-
-        let normalized = normalize(&output);
-        if !sent_trust
-            && (normalized.contains("doyoutrustthefilesinthisfolder")
-                || normalized.contains("readytocodehere")
-                || normalized.contains("pressentertocontinue"))
-        {
-            writer.write_all(b"y\r")?;
-            writer.flush()?;
-            sent_trust = true;
-        }
-        if !sent_usage
-            && (normalized.contains("claude")
-                || normalized.contains("currentsession")
-                || sent_trust)
-        {
-            writer.write_all(b"/usage\r")?;
-            writer.flush()?;
-            sent_usage = true;
-        }
-        if sent_usage && normalized.contains("currentsession") {
-            if let Some(usage) = parse_usage(&output) {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Ok(usage);
+        while started.elapsed() < timeout {
+            while let Ok(chunk) = receiver.try_recv() {
+                output.push_str(&String::from_utf8_lossy(&chunk));
             }
-        }
 
-        std::thread::sleep(Duration::from_millis(60));
-    }
+            let normalized = normalize(&output);
+            if !sent_trust
+                && (normalized.contains("doyoutrustthefilesinthisfolder")
+                    || normalized.contains("readytocodehere")
+                    || normalized.contains("pressentertocontinue"))
+            {
+                writer.write_all(b"y\r")?;
+                writer.flush()?;
+                sent_trust = true;
+            }
+            if !sent_usage
+                && (normalized.contains("claude")
+                    || normalized.contains("currentsession")
+                    || sent_trust)
+            {
+                writer.write_all(b"/usage\r")?;
+                writer.flush()?;
+                sent_usage = true;
+            }
+            if sent_usage && normalized.contains("currentsession") {
+                if let Some(usage) = parse_usage(&output) {
+                    return Ok(usage);
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(60));
+        }
+        Err(anyhow!(
+            "Claude CLI /usage probe timed out or returned an unreadable panel"
+        ))
+    })();
 
     let _ = child.kill();
     let _ = child.wait();
-    Err(anyhow!(
-        "Claude CLI /usage probe timed out or returned an unreadable panel"
-    ))
+    result
 }
 
 fn read_output(mut reader: Box<dyn Read + Send>, sender: mpsc::Sender<Vec<u8>>) {
