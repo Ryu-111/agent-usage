@@ -1,4 +1,4 @@
-import type { Agent, AppSnapshot, UsageWindow } from "./types";
+import type { Agent, AppSnapshot, UsageHistory, UsageWindow } from "./types";
 
 type Invoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 type Listen = <T>(
@@ -30,6 +30,33 @@ export async function loadLiveSnapshot(): Promise<AppSnapshot> {
 
 export async function refreshLiveSnapshot(): Promise<AppSnapshot> {
   return invokeCommand<AppSnapshot>("refresh_usage");
+}
+
+export async function loadUsageHistory(): Promise<UsageHistory> {
+  return invokeCommand<UsageHistory>("get_usage_history");
+}
+
+export function previewHistory(): UsageHistory {
+  const hours = 8 * 24;
+  const start = new Date();
+  start.setUTCMinutes(0, 0, 0);
+  start.setTime(start.getTime() - (hours - 1) * 3_600_000);
+  // Deterministic, work-hours-shaped sample data for the browser preview.
+  const curve = (seed: number) =>
+    Array.from({ length: hours }, (_, i) => {
+      const hourJst = (start.getUTCHours() + i + 9) % 24;
+      const working = hourJst >= 9 && hourJst <= 23 ? 1 : 0.05;
+      const day = Math.floor(i / 24);
+      return Math.round(working * (6000 + ((day * 7919 + seed * 104729) % 9000)));
+    });
+  return {
+    bucketStart: start.toISOString(),
+    bucketMinutes: 60,
+    series: [
+      { agent: "claudeCode", tokens: curve(1) },
+      { agent: "codex", tokens: curve(2).map((value) => Math.round(value * 0.6)) }
+    ]
+  };
 }
 
 export function unavailableSnapshot(): AppSnapshot {

@@ -4,7 +4,9 @@ import {
   agentLabel,
   sourceLabel,
   windowLabel,
+  type Agent,
   type AppSnapshot,
+  type UsageHistory,
   type UsageSnapshot
 } from "../shared/types";
 import {
@@ -12,11 +14,13 @@ import {
   isBrowserPreview,
   listenSnapshot,
   loadLiveSnapshot,
+  loadUsageHistory,
+  previewHistory,
   previewSnapshot,
   refreshLiveSnapshot,
   unavailableSnapshot
 } from "../shared/tauri";
-import { formatDateTimeJst } from "../shared/time";
+import { dayKeyJst, formatDateTimeJst, formatDayJst, formatShortDayJst } from "../shared/time";
 
 const rings = document.querySelector<HTMLDivElement>("#rings");
 const burnRates = document.querySelector<HTMLDivElement>("#burn-rates");
@@ -24,6 +28,17 @@ const refresh = document.querySelector<HTMLButtonElement>("#refresh");
 const status = document.querySelector<HTMLParagraphElement>("#status");
 const hookSettings = document.querySelector<HTMLElement>("#hook-settings");
 const webCookieSettings = document.querySelector<HTMLElement>("#web-cookie-settings");
+const historyChart = document.querySelector<HTMLDivElement>("#history");
+const historyLegend = document.querySelector<HTMLDivElement>("#history-legend");
+const historyTooltip = document.querySelector<HTMLDivElement>("#history-tooltip");
+
+const HISTORY_DAYS = 7;
+const HISTORY_REFRESH_MS = 5 * 60_000;
+const historyAgents: Agent[] = ["claudeCode", "codex"];
+const compactNumber = new Intl.NumberFormat(undefined, {
+  notation: "compact",
+  maximumFractionDigits: 1
+});
 
 interface ClaudeHookStatus {
   installed: boolean;
@@ -147,6 +162,185 @@ function render(snapshot: AppSnapshot): void {
       return row;
     })
   );
+}
+
+interface HistoryDay {
+  key: string;
+  label: string;
+  shortLabel: string;
+  totals: Record<Agent, number>;
+}
+
+/** Groups hourly buckets into the last HISTORY_DAYS calendar days in JST. */
+function historyDays(data: UsageHistory, now = new Date()): HistoryDay[] {
+  const days: HistoryDay[] = [];
+  for (let offset = HISTORY_DAYS - 1; offset >= 0; offset -= 1) {
+    // JST has no DST, so stepping back whole days always lands on the prior date.
+    const date = new Date(now.getTime() - offset * 86_400_000);
+    days.push({
+      key: dayKeyJst(date),
+      label: formatDayJst(date),
+      shortLabel: formatShortDayJst(date),
+      totals: { claudeCode: 0, codex: 0 }
+    });
+  }
+  const byKey = new Map(days.map((day) => [day.key, day]));
+  const start = new Date(data.bucketStart).getTime();
+  const step = data.bucketMinutes * 60_000;
+  for (const series of data.series) {
+    series.tokens.forEach((tokens, index) => {
+      const day = byKey.get(dayKeyJst(new Date(start + index * step)));
+      if (day) {
+        day.totals[series.agent] += tokens;
+      }
+    });
+  }
+  return days;
+}
+
+/** Rounds up to a value whose half is also readable (e.g. 300K → 150K). */
+function niceCeiling(value: number): number {
+  if (value <= 0) {
+    return 1;
+  }
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const step =
+    [1, 1.2, 1.5, 2, 3, 4, 5, 6, 8, 10].find((candidate) => candidate * magnitude >= value) ?? 10;
+  return step * magnitude;
+}
+
+function renderHistoryLegend(): void {
+  historyLegend?.replaceChildren(
+    ...historyAgents.map((agent) => {
+      const item = document.createElement("span");
+      item.className = "legend-item";
+      item.innerHTML = `<i class="swatch" data-agent="${agent}"></i>${agentLabel[agent]}`;
+      return item;
+    })
+  );
+}
+
+function showHistoryTooltip(day: HistoryDay, anchor: HTMLElement): void {
+  if (!historyTooltip) {
+    return;
+  }
+  const total = historyAgents.reduce((sum, agent) => sum + day.totals[agent], 0);
+  historyTooltip.innerHTML = `
+    <strong>${day.label}</strong>
+    ${historyAgents
+      .map(
+        (agent) => `
+          <span class="tooltip-row">
+            <i class="swatch" data-agent="${agent}"></i>${agentLabel[agent]}
+            <b>${day.totals[agent].toLocaleString()}</b>
+          </span>`
+      )
+      .join("")}
+    <span class="tooltip-row tooltip-total">Total<b>${total.toLocaleString()}</b></span>
+  `;
+  historyTooltip.hidden = false;
+  const panel = historyTooltip.offsetParent as HTMLElement | null;
+  if (!panel) {
+    return;
+  }
+  const panelRect = panel.getBoundingClientRect();
+  const anchorRect = anchor.getBoundingClientRect();
+  const width = historyTooltip.offsetWidth;
+  const center = anchorRect.left - panelRect.left + anchorRect.width / 2;
+  const left = Math.min(Math.max(center - width / 2, 8), panelRect.width - width - 8);
+  historyTooltip.style.left = `${left}px`;
+  historyTooltip.style.top = `${anchorRect.top - panelRect.top - historyTooltip.offsetHeight - 8}px`;
+}
+
+function hideHistoryTooltip(): void {
+  if (historyTooltip) {
+    historyTooltip.hidden = true;
+  }
+}
+
+function renderHistory(data: UsageHistory): void {
+  if (!historyChart) {
+    return;
+  }
+  const days = historyDays(data);
+  const peak = Math.max(0, ...days.flatMap((day) => historyAgents.map((agent) => day.totals[agent])));
+  if (peak === 0) {
+    const empty = document.createElement("p");
+    empty.className = "history-empty";
+    empty.textContent = "No local token usage in the last 7 days";
+    historyChart.replaceChildren(empty);
+    return;
+  }
+
+  const ceiling = niceCeiling(peak);
+  const axis = document.createElement("div");
+  axis.className = "history-axis";
+  const plot = document.createElement("div");
+  plot.className = "history-plot";
+  const gridLayer = document.createElement("div");
+  gridLayer.className = "history-grid";
+  plot.append(gridLayer);
+  for (const fraction of [1, 0.5, 0]) {
+    const label = document.createElement("span");
+    label.style.setProperty("--y", `${fraction * 100}%`);
+    label.textContent = compactNumber.format(ceiling * fraction);
+    axis.append(label);
+    const line = document.createElement("i");
+    line.className = fraction === 0 ? "gridline baseline" : "gridline";
+    line.style.setProperty("--y", `${fraction * 100}%`);
+    gridLayer.append(line);
+  }
+
+  const today = dayKeyJst(new Date());
+  const columns = days.map((day) => {
+    const column = document.createElement("div");
+    column.className = "history-day";
+    column.tabIndex = 0;
+    column.setAttribute(
+      "aria-label",
+      `${day.label}: ${historyAgents
+        .map((agent) => `${agentLabel[agent]} ${day.totals[agent].toLocaleString()} tokens`)
+        .join(", ")}`
+    );
+    const bars = document.createElement("div");
+    bars.className = "history-bars";
+    for (const agent of historyAgents) {
+      const bar = document.createElement("span");
+      bar.className = "history-bar";
+      bar.dataset.agent = agent;
+      bar.style.setProperty("--h", `${(day.totals[agent] / ceiling) * 100}%`);
+      bars.append(bar);
+    }
+    const label = document.createElement("span");
+    label.className = day.key === today ? "history-label is-today" : "history-label";
+    label.textContent = day.shortLabel;
+    column.append(bars, label);
+    column.addEventListener("mouseenter", () => showHistoryTooltip(day, bars));
+    column.addEventListener("focus", () => showHistoryTooltip(day, bars));
+    column.addEventListener("mouseleave", hideHistoryTooltip);
+    column.addEventListener("blur", hideHistoryTooltip);
+    return column;
+  });
+  const grid = document.createElement("div");
+  grid.className = "history-days";
+  grid.append(...columns);
+  plot.append(grid);
+  historyChart.replaceChildren(axis, plot);
+}
+
+async function loadHistory(): Promise<void> {
+  try {
+    renderHistory(await loadUsageHistory());
+  } catch {
+    if (isBrowserPreview()) {
+      renderHistory(previewHistory());
+    } else if (historyChart) {
+      const empty = document.createElement("p");
+      empty.className = "history-empty";
+      empty.textContent = "History unavailable";
+      historyChart.replaceChildren(empty);
+    }
+  }
 }
 
 async function load(): Promise<void> {
@@ -282,6 +476,7 @@ async function loadWebCookieSettings(): Promise<void> {
 
 refresh?.addEventListener("click", async () => {
   setStatus("Refreshing live usage...");
+  void loadHistory();
   try {
     render(await refreshLiveSnapshot());
     setStatus("Live usage connected");
@@ -292,5 +487,8 @@ refresh?.addEventListener("click", async () => {
 
 void listenSnapshot(render).catch(() => undefined);
 void load();
+renderHistoryLegend();
+void loadHistory();
+window.setInterval(() => void loadHistory(), HISTORY_REFRESH_MS);
 void loadHookSettings();
 void loadWebCookieSettings();

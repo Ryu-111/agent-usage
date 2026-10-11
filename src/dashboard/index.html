@@ -26,17 +26,14 @@
           <h2>Burn rate</h2>
           <div id="burn-rates" class="metric-list"></div>
         </div>
-        <div>
-          <h2>7 day history</h2>
-          <div class="bars" aria-hidden="true">
-            <span style="--h: 42%"></span>
-            <span style="--h: 55%"></span>
-            <span style="--h: 31%"></span>
-            <span style="--h: 66%"></span>
-            <span style="--h: 48%"></span>
-            <span style="--h: 72%"></span>
-            <span style="--h: 58%"></span>
+        <div class="history-panel">
+          <div class="panel-head">
+            <h2>7 day history</h2>
+            <div id="history-legend" class="legend"></div>
           </div>
+          <p class="panel-sub">Tokens per day (JST), from local session logs</p>
+          <div id="history" class="history-chart" role="img" aria-label="Daily token usage for the last 7 days"></div>
+          <div id="history-tooltip" class="chart-tooltip" role="tooltip" hidden></div>
         </div>
       </section>
     </main>

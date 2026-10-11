@@ -50,3 +50,15 @@ export const sourceLabel: Record<SnapshotSource, string> = {
   localEstimate: "est.",
   unavailable: "--"
 };
+
+export interface UsageHistorySeries {
+  agent: Agent;
+  tokens: number[];
+}
+
+/** Hourly token totals per agent; buckets start at `bucketStart` (UTC). */
+export interface UsageHistory {
+  bucketStart: string;
+  bucketMinutes: number;
+  series: UsageHistorySeries[];
+}

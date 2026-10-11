@@ -9,6 +9,7 @@ use anyhow::Context;
 use core::history::HistoryStore;
 use core::model::{Agent, AgentUsage, AppSnapshot, SnapshotSource, UsageSnapshot, UsageWindow};
 use core::scheduler::{Scheduler, SchedulerConfig};
+use core::usage_history::{hourly_history, UsageHistory};
 use providers::claude::ClaudeProvider;
 use providers::codex::CodexProvider;
 use serde::Serialize;
@@ -68,6 +69,33 @@ async fn refresh_usage<R: Runtime>(
     *state.latest.write().await = Some(snapshot.clone());
     let _ = app.emit("usage://snapshot", &snapshot);
     Ok(snapshot)
+}
+
+/// Hourly token totals for the last 8 days (enough to cover 7 full local
+/// calendar days in any timezone), read from the local session logs.
+#[tauri::command]
+async fn get_usage_history() -> Result<UsageHistory, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let claude = ClaudeProvider::default()
+            .local_events()
+            .unwrap_or_else(|err| {
+                eprintln!("Claude history read failed: {err:#}");
+                Vec::new()
+            });
+        let codex = CodexProvider::default()
+            .local_events()
+            .unwrap_or_else(|err| {
+                eprintln!("Codex history read failed: {err:#}");
+                Vec::new()
+            });
+        hourly_history(
+            chrono::Utc::now(),
+            8 * 24,
+            vec![(Agent::ClaudeCode, claude), (Agent::Codex, codex)],
+        )
+    })
+    .await
+    .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -200,6 +228,7 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             get_usage_snapshot,
+            get_usage_history,
             install_claude_rate_limits_hook,
             get_claude_rate_limits_hook_status,
             is_claude_rate_limits_hook_installed,
