@@ -14,19 +14,19 @@ default = []
 custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
-tauri-build = { version = "=2.0.0", features = [] }
+tauri-build = { version = "=2.2.0", features = [] }
 
 [dependencies]
 anyhow = "1"
-aes = "0.8"
-cbc = "0.1"
-chrono = { version = "=0.4.38", features = ["serde"] }
-dirs = "=5.0.1"
+aes = "0.9"
+cbc = "0.2"
+chrono = { version = "=0.4.45", features = ["serde"] }
+dirs = "=6.0.0"
 glob = "0.3"
-portable-pty = "0.8"
-reqwest = { version = "=0.12.9", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
-rusqlite = { version = "=0.32.1", features = ["bundled"] }
-security-framework = "=3.2.0"
+portable-pty = "0.9"
+reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+security-framework = "=3.7.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "=2.0.0", features = ["macos-private-api", "tray-icon"] }
@@ -34,19 +34,19 @@ tauri-codegen = "=2.0.0"
 tauri-macros = "=2.0.0"
 tauri-runtime = "=2.0.0"
 tauri-runtime-wry = "=2.0.0"
-tauri-utils = "=2.0.0"
-thiserror = "=1.0.69"
-time = "=0.3.36"
+tauri-utils = "=2.4.0"
+thiserror = "=2.0.18"
+time = "=0.3.55"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "time"] }
-url = "=2.5.4"
-idna_adapter = "=1.0.0"
-indexmap = "=2.6.0"
+url = "=2.5.8"
+idna_adapter = "=1.2.2"
+indexmap = "=2.14.2"
 libc = "0.2"
-hyper-rustls = { version = "=0.27.5", default-features = false, features = ["http1", "tls12", "webpki-roots"] }
-pbkdf2 = "0.12"
-sha1 = "0.10"
-unicode-segmentation = "=1.12.0"
-uuid = "=1.10.0"
+hyper-rustls = { version = "=0.27.10", default-features = false, features = ["http1", "tls12", "webpki-roots"] }
+pbkdf2 = "0.13"
+sha1 = "0.11"
+unicode-segmentation = "=1.13.3"
+uuid = "=1.28.0"
 
 [dev-dependencies]
-tempfile = "=3.10.1"
+tempfile = "=3.27.0"
