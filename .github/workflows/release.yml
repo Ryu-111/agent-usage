@@ -1,8 +1,9 @@
 name: macOS Package
 
 # Every PR and push to main builds a universal (Apple Silicon + Intel) .dmg and
-# uploads it as a workflow artifact. Pushing a tag like v0.2.0 additionally
-# publishes a GitHub Release with the .dmg attached. Builds are ad-hoc signed
+# uploads it as a workflow artifact. Pushing a tag like v0.2.0 (or running the
+# workflow manually with a `tag` input) additionally publishes a GitHub Release
+# with the .dmg attached, creating the tag if needed. Builds are ad-hoc signed
 # (no Apple Developer ID), so Gatekeeper asks for confirmation on first launch.
 on:
   push:
@@ -10,6 +11,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create on the selected commit (e.g. v0.2.0). Leave empty to only build."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -55,7 +61,7 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.tag, 'v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -68,9 +74,11 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
+          # --target creates the tag on this commit when it doesn't exist yet.
           gh release create "$TAG" dist/*.dmg \
             --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
             --title "agent-usage $TAG" \
             --generate-notes
