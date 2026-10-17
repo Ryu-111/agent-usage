@@ -19,7 +19,7 @@ pub fn read_latest_rate_limits(sessions_root: &Path) -> anyhow::Result<Option<Ra
 
     let mut files = Vec::new();
     collect_jsonl_files(sessions_root, &mut files)?;
-    files.sort_by(|left, right| right.modified.cmp(&left.modified));
+    files.sort_by_key(|file| std::cmp::Reverse(file.modified));
 
     for file in files.into_iter().take(30) {
         let content = fs::read_to_string(&file.path)

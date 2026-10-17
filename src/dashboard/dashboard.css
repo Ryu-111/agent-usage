@@ -41,6 +41,10 @@ h1 {
   margin: 0 0 16px;
 }
 
+.settings-row:empty {
+  display: none;
+}
+
 .secondary-button {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -174,25 +178,215 @@ h1 {
   color: var(--muted);
 }
 
-.bars {
-  align-items: end;
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(7, 1fr);
-  height: 170px;
-  margin-top: 12px;
+.history-panel {
+  position: relative;
+  --series-claudeCode: #3987e5;
+  --series-codex: #d95926;
 }
 
-.bars span {
-  background: linear-gradient(180deg, var(--accent), var(--accent-2));
-  border-radius: 6px 6px 2px 2px;
+.panel-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: space-between;
+}
+
+.panel-head h2 {
+  margin: 0;
+}
+
+.panel-sub {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+.legend {
+  display: flex;
+  gap: 14px;
+}
+
+.legend-item {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+}
+
+.swatch {
+  border-radius: 2px;
+  display: inline-block;
+  flex: none;
+  height: 10px;
+  width: 10px;
+}
+
+.swatch[data-agent="claudeCode"],
+.history-bar[data-agent="claudeCode"] {
+  background: var(--series-claudeCode);
+}
+
+.swatch[data-agent="codex"],
+.history-bar[data-agent="codex"] {
+  background: var(--series-codex);
+}
+
+.history-chart {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+  height: 200px;
+  margin-top: 16px;
+}
+
+.history-axis {
+  position: relative;
+  /* Leave room at the bottom for the day labels under the plot. */
+  margin-bottom: 22px;
+  min-width: 32px;
+}
+
+.history-axis span {
+  bottom: var(--y);
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+}
+
+.history-plot {
+  position: relative;
+}
+
+.history-grid {
+  /* Same vertical extent as the bars: everything above the day-label row. */
+  inset: 0 0 22px;
+  pointer-events: none;
+  position: absolute;
+}
+
+.gridline {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  bottom: var(--y);
+  left: 0;
+  position: absolute;
+  right: 0;
+}
+
+.gridline.baseline {
+  border-top-color: rgba(255, 255, 255, 0.18);
+}
+
+.history-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  height: 100%;
+  position: relative;
+}
+
+.history-day {
+  border-radius: 6px;
+  cursor: default;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 22px;
+  outline: none;
+  padding: 0 4px;
+}
+
+.history-day:hover,
+.history-day:focus-visible {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.history-bars {
+  align-items: end;
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+}
+
+.history-bar {
+  border-radius: 4px 4px 0 0;
+  flex: 1 1 0;
   height: var(--h);
+  max-width: 18px;
+  min-height: 0;
+}
+
+.history-label {
+  align-self: end;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-label.is-today {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.history-empty {
+  align-self: center;
+  color: var(--muted);
+  grid-column: 1 / -1;
+  margin: 0;
+  text-align: center;
+}
+
+.chart-tooltip {
+  background: #0d1118;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  display: grid;
+  font-size: 12px;
+  gap: 4px;
+  min-width: 180px;
+  padding: 10px 12px;
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+}
+
+.chart-tooltip[hidden] {
+  display: none;
+}
+
+.tooltip-row {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  gap: 6px;
+}
+
+.tooltip-row b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.tooltip-total {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 4px;
+}
+
+@media (max-width: 1280px) {
+  .ring-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 960px) {
-  .ring-grid,
   .panels {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 }
 

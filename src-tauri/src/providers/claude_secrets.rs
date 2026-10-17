@@ -1,4 +1,6 @@
+#[cfg(target_os = "macos")]
 const SERVICE: &str = "dev.ryu.agent-usage";
+#[cfg(target_os = "macos")]
 const ACCOUNT: &str = "claude.web-cookie";
 
 pub fn read_web_cookie() -> anyhow::Result<Option<String>> {

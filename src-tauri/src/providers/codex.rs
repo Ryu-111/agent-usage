@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use chrono::{Duration, Utc};
 use tokio::sync::Mutex;
 
-use crate::core::model::{Agent, UsageSnapshot};
+use crate::core::model::{Agent, TokenEvent, UsageSnapshot};
 use crate::providers::claude::local_windows;
 use crate::providers::codex_cli::AppServerClient;
 use crate::providers::codex_session::read_latest_rate_limits;
@@ -86,12 +86,16 @@ impl CodexProvider {
         self.local_snapshot()
     }
 
+    /// Token events from the local Codex session logs over the last 8 days.
+    pub fn local_events(&self) -> anyhow::Result<Vec<TokenEvent>> {
+        match &self.sessions_pattern {
+            Some(pattern) => read_recent_token_events(pattern, Duration::days(8)),
+            None => Ok(Vec::new()),
+        }
+    }
+
     fn local_snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {
-        let events = match &self.sessions_pattern {
-            Some(pattern) => read_recent_token_events(pattern, Duration::days(8))?,
-            None => Vec::new(),
-        };
-        Ok(local_windows(Agent::Codex, &events))
+        Ok(local_windows(Agent::Codex, &self.local_events()?))
     }
 }
 

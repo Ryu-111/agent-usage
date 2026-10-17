@@ -42,6 +42,13 @@ npm run tauri:build
 
 個人利用の ad-hoc 署名では、初回起動時に Finder で右クリックして「開く」が必要になる場合があります。HUD は通常のデスクトップアプリと同じように Dock / タスクバーへ最小化できる構成です。
 
+## CI / Release
+
+- `CI`（`.github/workflows/ci.yml`）: PR と `main` への push で、フロントエンドの型チェックとビルド、Rust の fmt / clippy / test（Linux・macOS）、gitleaks による機密スキャンを実行します。
+- `macOS Package`（`.github/workflows/release.yml`）: PR と `main` への push のたびに、Apple Silicon / Intel 両対応（universal）の `.dmg` をビルドし、Actions の実行結果ページの Artifacts からダウンロードできるようにします。`v0.2.0` のようなタグを push すると、同じ `.dmg` をドラフトの GitHub Release にも添付します。Developer ID 署名はしていない ad-hoc 署名です。
+  - ダウンロードした `.app` は初回起動時に macOS に止められます。Finder で右クリック →「開く」を選ぶか、`xattr -dr com.apple.quarantine /Applications/agent-usage.app` を実行してください。
+- Dependabot が GitHub Actions・npm・Cargo の依存を毎週まとめて更新します。
+
 ## Current Scope
 
 このリポジトリではコードとフィクスチャ駆動のテストまでを扱います。最終的な `.app` / `.dmg` 生成と透明 HUD の目視確認は macOS 実機で行ってください。

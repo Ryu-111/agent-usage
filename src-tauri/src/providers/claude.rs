@@ -81,7 +81,9 @@ impl ClaudeProvider {
         self.local_snapshot()
     }
 
-    fn local_snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {
+    /// Token events from the local Claude Code and Claude Desktop logs over
+    /// the last 8 days, oldest first.
+    pub fn local_events(&self) -> anyhow::Result<Vec<TokenEvent>> {
         let mut events = Vec::new();
         if let Some(pattern) = &self.projects_pattern {
             events.extend(read_recent_token_events(pattern, Duration::days(8))?);
@@ -90,8 +92,11 @@ impl ClaudeProvider {
             events.extend(read_recent_token_events(pattern, Duration::days(8))?);
         }
         events.sort_by_key(|event| event.timestamp);
-        let windows = local_windows(Agent::ClaudeCode, &events);
-        Ok(windows)
+        Ok(events)
+    }
+
+    fn local_snapshot(&self) -> anyhow::Result<Vec<UsageSnapshot>> {
+        Ok(local_windows(Agent::ClaudeCode, &self.local_events()?))
     }
 
     fn hook_snapshot(&self) -> anyhow::Result<Option<Vec<UsageSnapshot>>> {
