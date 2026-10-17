@@ -2,7 +2,7 @@ name: macOS Package
 
 # Every PR and push to main builds a universal (Apple Silicon + Intel) .dmg and
 # uploads it as a workflow artifact. Pushing a tag like v0.2.0 additionally
-# attaches the .dmg to a draft GitHub Release. Builds are ad-hoc signed
+# publishes a GitHub Release with the .dmg attached. Builds are ad-hoc signed
 # (no Apple Developer ID), so Gatekeeper asks for confirmation on first launch.
 on:
   push:
@@ -53,7 +53,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Attach .dmg to draft release
+    name: Publish GitHub Release
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -65,7 +65,7 @@ jobs:
         with:
           name: agent-usage-macos-universal
           path: dist
-      - name: Create draft release
+      - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
@@ -73,5 +73,4 @@ jobs:
           gh release create "$TAG" dist/*.dmg \
             --repo "$GITHUB_REPOSITORY" \
             --title "agent-usage $TAG" \
-            --draft \
             --generate-notes

@@ -1,6 +1,6 @@
 [package]
 name = "agent-usage"
-version = "0.1.0"
+version = "0.2.0"
 description = "Claude Code and Codex rate-limit usage HUD"
 authors = ["ryu"]
 edition = "2021"
