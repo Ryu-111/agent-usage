@@ -32,6 +32,7 @@ dependencies = [
  "hyper-rustls",
  "idna_adapter",
  "indexmap 2.6.0",
+ "libc",
  "pbkdf2",
  "portable-pty",
  "reqwest",

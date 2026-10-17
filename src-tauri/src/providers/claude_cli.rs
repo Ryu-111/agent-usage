@@ -42,13 +42,17 @@ fn fetch_usage_blocking(binary: &PathBuf, timeout: Duration) -> anyhow::Result<C
         .context("spawn Claude CLI")?;
     drop(pair.slave);
 
+    // Kept outside the closure so it is dropped only after teardown below.
+    let mut writer_slot: Option<Box<dyn Write + Send>> = None;
+
     // Run the interaction in a closure so every exit path, including PTY
     // setup and write errors, kills the spawned CLI instead of leaking it.
     let result = (|| -> anyhow::Result<ClaudeCliUsage> {
-        let mut writer = pair
-            .master
-            .take_writer()
-            .context("open Claude CLI PTY writer")?;
+        let writer = writer_slot.insert(
+            pair.master
+                .take_writer()
+                .context("open Claude CLI PTY writer")?,
+        );
         let reader = pair
             .master
             .try_clone_reader()
@@ -98,9 +102,28 @@ fn fetch_usage_blocking(binary: &PathBuf, timeout: Duration) -> anyhow::Result<C
         ))
     })();
 
+    // Dropping portable-pty's writer writes an EOF to the PTY master. On macOS
+    // that write can block forever once the CLI has exited and the slave side
+    // is closed, so make the shared file description non-blocking first.
+    #[cfg(unix)]
+    if let Some(fd) = pair.master.as_raw_fd() {
+        set_nonblocking(fd);
+    }
     let _ = child.kill();
     let _ = child.wait();
+    drop(writer_slot);
     result
+}
+
+#[cfg(unix)]
+fn set_nonblocking(fd: std::os::unix::io::RawFd) {
+    // SAFETY: fcntl on a valid, open fd owned by `pair.master`.
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFL);
+        if flags >= 0 {
+            libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+    }
 }
 
 fn read_output(mut reader: Box<dyn Read + Send>, sender: mpsc::Sender<Vec<u8>>) {
