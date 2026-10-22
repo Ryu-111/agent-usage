@@ -21,7 +21,7 @@ anyhow = "1"
 aes = "0.9"
 cbc = "0.2"
 chrono = { version = "=0.4.45", features = ["serde"] }
-dirs = "=6.0.0"
+dirs = "=7.0.0"
 glob = "0.3"
 portable-pty = "0.9"
 reqwest = { version = "=0.12.28", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
@@ -30,12 +30,12 @@ security-framework = "=3.7.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "=2.0.0", features = ["macos-private-api", "tray-icon"] }
-tauri-codegen = "=2.0.0"
-tauri-macros = "=2.0.0"
-tauri-runtime = "=2.0.0"
-tauri-runtime-wry = "=2.0.0"
+tauri-codegen = "=2.2.0"
+tauri-macros = "=2.2.0"
+tauri-runtime = "=2.6.0"
+tauri-runtime-wry = "=2.6.0"
 tauri-utils = "=2.4.0"
-thiserror = "=2.0.18"
+thiserror = "=2.0.21"
 time = "=0.3.55"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "time"] }
 url = "=2.5.8"
